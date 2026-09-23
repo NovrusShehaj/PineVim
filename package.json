@@ -2,7 +2,7 @@
   "name": "pinevim-local",
   "version": "0.1.0",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "MIT",
   "description": "Private tmux workspace for interactive Pi and normal Neovim",
   "type": "module",
   "engines": {
@@ -13,6 +13,7 @@
   },
   "files": [
     "dist",
+    "LICENSE",
     "README.md",
     "Docs/Compatibility.md",
     "Docs/Testing.md",

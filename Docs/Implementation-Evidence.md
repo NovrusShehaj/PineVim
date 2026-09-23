@@ -117,7 +117,7 @@ The local validation commands and outcomes are recorded here so they are distinc
 | Node minimum/public Pi API compatibility           | Node 22.19.0 and 26.9.0 tests; pinned exported Pi 0.87.1 types; no runtime private imports                                                                       | PASS for tested versions                                 |
 | tmux/Neovim compatibility                          | local tmux3.7c, Nvim0.12.4; required tmux>=3.5 features inspected                                                                                                | PASS local versions; tmux3.5 lower baseline not executed |
 | Packaging/development                              | ESM, strict TS, lockfile, no runtime npm dependencies, compiled helper/extension, bin, disposable install; K                                                     | PASS                                                     |
-| Documentation                                      | README, Compatibility, Testing and this matrix; no license/publication assumed                                                                                   | PASS                                                     |
+| Documentation                                      | README, Compatibility, Testing and this matrix; license and package publication statuses are explicit                                                             | PASS                                                     |
 
 Security fixes made during implementation included tmux cwd/format escaping, helper quoting, socket epoch/capability enforcement, log symlink refusal, prototype-property command/config rejection, cleanup's final-pane exit race, preserving zoom during focus, border-drag feedback prevention, detach write ordering, early startup metadata, refusing duplicate creation after a lost result, and expiring queued intents before late execution. Each material behavior has regression coverage. Same-UID malicious Pi extensions remain inside the stated trust boundary; this is not an OS sandbox.
 
@@ -148,7 +148,7 @@ Security fixes made during implementation included tmux cwd/format escaping, hel
 | PINE-021 | PASS     | S/U/P/K security and package/diagnostic boundaries                                             |
 | PINE-022 | PASS     | K local tarball install/bin/assets                                                             |
 | PINE-023 | PARTIAL  | local suites and personal-config semantic smoke passed; Linux/SSH/full terminal matrix remains |
-| PINE-024 | PASS     | README/support/release checklist and explicit UNLICENSED/private status                        |
+| PINE-024 | PASS     | README/support/release checklist, MIT source license, and private npm package status             |
 | PINE-025 | DEFERRED | Optional editor RPC/context phase intentionally excluded                                       |
 
 | Phase               | Exit result                                                                                                                                                                                            |
@@ -159,13 +159,15 @@ Security fixes made during implementation included tmux cwd/format escaping, hel
 | 3 layout/input      | Layout, resize, compact and synthetic input passed; physical native keys/clipboard remain open.                                                                                                        |
 | 4 visibility/exit   | Identity/buffer preservation and safe quit passed.                                                                                                                                                     |
 | 5 recovery          | Public lifecycle/session/collision/provider fixtures and controller crash/retry passed.                                                                                                                |
-| 6 packaging         | Local install passed; owner license/namespace decision required only before publication.                                                                                                               |
+| 6 packaging         | Local install passed; MIT source license chosen; npm namespace remains undecided before package publication.                                                                                         |
 | 7 release readiness | NOT CLEARED: Linux, SSH and complete physical terminal matrix absent.                                                                                                                                  |
 | 8 optional context  | DEFERRED by contract: no Neovim RPC/context transfer added.                                                                                                                                            |
 
 ## Definition-of-done audit
 
-Source modules, runnable distribution, real interactive integration, lazy normal editor, persistent views, serialized lifecycle, bounded IPC, recovery, private tmux, safety/security regressions, deterministic provider tests, package install, measured performance and user/developer documentation are present. No production mocks, unimplemented stubs, disabled failing tests or broad cleanup bypasses are accepted. The repository remains uncommitted; no remote/global install/publication occurred.
+Source modules, runnable distribution, real interactive integration, lazy normal editor, persistent views, serialized lifecycle, bounded IPC, recovery, private tmux, safety/security regressions, deterministic provider tests, package install, measured performance and user/developer documentation are present. No production mocks, unimplemented stubs, disabled failing tests or broad cleanup bypasses are accepted. At implementation completion, no global install or npm package publication occurred. The GitHub repository was subsequently made public; the owner later selected the MIT source license. The npm package remains private.
+
+The owner selected MIT for the source distribution after the initial implementation audit; `LICENSE`, package metadata, and README reflect that decision. The GitHub repository is public. The npm package stays marked private, and its namespace is not selected.
 
 The mandatory full terminal/platform acceptance gate is **not satisfied**. This prevents a full-completion or production-ready claim even though local implementation and deterministic verification pass. The non-goals (RPC, editor content upload, custom chat/provider/auth management, multiworkspace, native Windows, auto plugin/config migration) are intentionally satisfied by remaining outside MVP.
 

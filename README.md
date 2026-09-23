@@ -27,7 +27,7 @@ npm install --prefix "$HOME/.local/pinevim" ./pinevim-local-0.1.0.tgz
 "$HOME/.local/pinevim/node_modules/.bin/pinevim" /path/to/workspace
 ```
 
-Or install the tarball using npm's global **user-controlled prefix** and add that prefix's `bin` to PATH yourself. PineVim never changes shell startup files. Package publication, namespace selection, and the license remain owner decisions. The local package is private and `UNLICENSED`; no license grant is implied.
+Or install the tarball using npm's global **user-controlled prefix** and add that prefix's `bin` to PATH yourself. PineVim never changes shell startup files. The source is licensed under MIT; the npm package remains private and has not been published. Its npm namespace is still undecided.
 
 ## Workflow
 
