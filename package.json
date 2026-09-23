@@ -1,0 +1,44 @@
+{
+  "name": "pinevim-local",
+  "version": "0.1.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "description": "Private tmux workspace for interactive Pi and normal Neovim",
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "bin": {
+    "pinevim": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "Docs/Compatibility.md",
+    "Docs/Testing.md",
+    "Docs/Implementation-Evidence.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
+    "lint": "eslint src tests --max-warnings 0",
+    "format": "prettier --write src tests scripts/*.mjs package.json tsconfig*.json eslint.config.js Docs/Compatibility.md Docs/Testing.md Docs/Implementation-Evidence.md README.md",
+    "format:check": "prettier --check src tests scripts/*.mjs package.json tsconfig*.json eslint.config.js Docs/Compatibility.md Docs/Testing.md Docs/Implementation-Evidence.md README.md",
+    "test": "npm run build && tsc -p tsconfig.test.json && node --test --test-concurrency=1 build/tests/unit/*.test.js build/tests/integration/*.test.js",
+    "test:unit": "tsc -p tsconfig.test.json && node --test build/tests/unit/*.test.js",
+    "test:integration": "npm run build && tsc -p tsconfig.test.json && node --test --test-concurrency=1 build/tests/integration/*.test.js",
+    "test:phase0": "python3 scripts/phase0.py",
+    "benchmark": "npm run build && tsc -p tsconfig.test.json && node scripts/benchmark.mjs",
+    "test:package": "npm run build && node scripts/package-smoke.mjs"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "0.87.1",
+    "@earendil-works/pi-coding-agent": "0.87.1",
+    "@eslint/js": "10.0.1",
+    "@types/node": "26.6.2",
+    "eslint": "10.11.0",
+    "prettier": "3.9.8",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.70.1"
+  }
+}

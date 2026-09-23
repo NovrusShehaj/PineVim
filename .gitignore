@@ -1,0 +1,56 @@
+# Node / TypeScript dependencies and generated output
+node_modules/
+dist/
+build/
+coverage/
+.nyc_output/
+*.tsbuildinfo
+.npm/
+*.tgz
+# Commit package-lock.json when the implementation creates it.
+
+# Local environment and credentials (examples must contain placeholders only)
+.env
+.env.*
+!.env.example
+/credentials.json
+/auth.json
+*.pem
+*.key
+
+# PineVim development/runtime state; never commit real sessions
+.pinevim/
+.pinevim-local/
+.pi/
+.runtime/
+/sessions/
+*.session.jsonl
+*.sock
+*.pid
+
+# Diagnostics and temporary artifacts
+logs/
+*.log
+npm-debug.log*
+trace-output/
+crash-dumps/
+tmp/
+.temp/
+*.tmp
+*.bak
+
+# OS/editor-local files
+.DS_Store
+._*
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.example.json
+*.swp
+*.swo
+*~
+
+# Python terminal-test bytecode
+__pycache__/
+*.pyc

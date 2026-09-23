@@ -1,0 +1,151 @@
+import { access, readFile, realpath, stat } from "node:fs/promises";
+import { constants } from "node:fs";
+import { homedir } from "node:os";
+import { isAbsolute, join, resolve } from "node:path";
+import { PineError } from "./diagnostics.js";
+export interface Config {
+  prefix: string;
+  agentRatio: number | null;
+  pi: string;
+  nvim: string;
+  tmux: string;
+  logLevel: "off" | "debug";
+}
+export const defaults: Config = {
+  prefix: "F12",
+  agentRatio: null,
+  pi: "pi",
+  nvim: "nvim",
+  tmux: "tmux",
+  logLevel: "off",
+};
+export function xdg(name: string, fallback: string): string {
+  const value = process.env[name];
+  if (value && !isAbsolute(value))
+    throw new PineError("CONFIG", `${name} must be an absolute directory.`);
+  return value || join(homedir(), fallback);
+}
+export function validateConfig(input: unknown): Config {
+  if (!input || typeof input !== "object" || Array.isArray(input))
+    throw new PineError("CONFIG", "PineVim config must be a JSON object.");
+  const c = { ...defaults };
+  for (const [key, value] of Object.entries(input)) {
+    if (!Object.hasOwn(defaults, key))
+      throw new PineError(
+        "CONFIG",
+        "Unknown field in PineVim config; allowed: prefix, agentRatio, pi, nvim, tmux, logLevel.",
+      );
+    switch (key) {
+      case "prefix":
+        if (
+          typeof value !== "string" ||
+          !/^(F(?:[1-9]|1[0-9]|2[0-4])|(?:C-|M-)?[a-z]|C-Space)$/.test(value)
+        )
+          throw new PineError(
+            "CONFIG",
+            "Invalid prefix; use F1–F24, a letter, C-letter, M-letter or C-Space.",
+          );
+        c.prefix = value;
+        break;
+      case "agentRatio":
+        if (
+          typeof value !== "number" ||
+          !Number.isFinite(value) ||
+          value < 0.1 ||
+          value > 0.9
+        )
+          throw new PineError(
+            "CONFIG",
+            "agentRatio must be between 0.1 and 0.9.",
+          );
+        c.agentRatio = value;
+        break;
+      case "pi":
+      case "nvim":
+      case "tmux":
+        if (
+          typeof value !== "string" ||
+          !isAbsolute(value) ||
+          /[\0\r\n]/.test(value)
+        )
+          throw new PineError(
+            "CONFIG",
+            `Field ${key} must be an absolute executable path.`,
+          );
+        c[key] = value;
+        break;
+      case "logLevel":
+        if (value !== "off" && value !== "debug")
+          throw new PineError("CONFIG", "logLevel must be off or debug.");
+        c.logLevel = value;
+    }
+  }
+  return c;
+}
+export async function loadConfig(): Promise<Config> {
+  const file = join(
+    xdg("XDG_CONFIG_HOME", ".config"),
+    "pinevim",
+    "config.json",
+  );
+  const raw = await readFile(file, "utf8").catch((e: NodeJS.ErrnoException) => {
+    if (e.code === "ENOENT") return "{}";
+    throw new PineError("CONFIG", "Cannot read PineVim config.json.");
+  });
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new PineError(
+      "CONFIG",
+      "Invalid JSON in PineVim config.json; correct the syntax. Values are omitted for privacy.",
+    );
+  }
+  const c = validateConfig(parsed);
+  if (process.env.PINEVIM_LOG_LEVEL !== undefined)
+    c.logLevel = validateConfig({
+      logLevel: process.env.PINEVIM_LOG_LEVEL,
+    }).logLevel;
+  return c;
+}
+export async function workspacePath(
+  input: string,
+): Promise<{ canonical: string; display: string }> {
+  const expanded =
+    input === "~"
+      ? homedir()
+      : input.startsWith("~/")
+        ? join(homedir(), input.slice(2))
+        : input;
+  try {
+    const canonical = await realpath(resolve(expanded));
+    if (!(await stat(canonical)).isDirectory()) throw new Error();
+    await access(canonical, constants.R_OK | constants.X_OK);
+    return { canonical, display: resolve(expanded) };
+  } catch {
+    throw new PineError(
+      "WORKSPACE",
+      "Workspace must be an existing accessible directory. PineVim does not create it or select the Git root.",
+    );
+  }
+}
+export async function executable(name: string): Promise<string> {
+  const candidates = isAbsolute(name)
+    ? [name]
+    : (process.env.PATH ?? "")
+        .split(":")
+        .filter(Boolean)
+        .map((p) => join(p, name));
+  for (const path of candidates) {
+    try {
+      await access(path, constants.X_OK);
+      if ((await stat(path)).isFile()) return await realpath(path);
+    } catch {
+      /* try next PATH entry */
+    }
+  }
+  throw new PineError(
+    "DEPENDENCY",
+    `Required ${["pi", "nvim", "tmux"].includes(name) ? name : "configured executable"} is unavailable; install it or correct its absolute path in PineVim config.`,
+  );
+}
