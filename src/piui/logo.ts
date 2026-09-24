@@ -35,8 +35,33 @@ export const PINE_TREE_WIDTH = 21;
  */
 export const PINE_CROWN_LINES = 5;
 
-/** Luminance factor for the trunk tone (0..1]; 1 disables the two-tone. */
-export const PINE_TRUNK_FACTOR = 0.68;
+/**
+ * Luminance factor applied to the accent to derive the trunk tone.
+ * <1 darkens (dark themes: the trunk sinks toward the background);
+ * >1 lightens (light themes: a dark trunk would read as a heavy black-green
+ * on a white background, so it is lifted instead). Channels clamp at 255;
+ * 1 disables the treatment. Per-theme values: see PINE_TRUNK_FACTOR_OVERRIDES.
+ */
+export const PINE_TRUNK_FACTOR = 0.6;
+
+/**
+ * Per-theme overrides keyed by the resolved Pi theme name. Light-background
+ * themes lift the trunk (> 1) — scaling a dark accent down only makes it
+ * stand out harder against white, so the direction flips for them.
+ */
+export const PINE_TRUNK_FACTOR_OVERRIDES: Readonly<Record<string, number>> = {
+  "pinevim-snow": 1.35,
+  "pinevim-light": 1.3,
+};
+
+/**
+ * Resolve the trunk factor for a theme. Unknown or unnamed themes fall back
+ * to PINE_TRUNK_FACTOR; shipped light-background themes override.
+ */
+export function trunkFactorFor(themeName: string | undefined): number {
+  if (themeName === undefined) return PINE_TRUNK_FACTOR;
+  return PINE_TRUNK_FACTOR_OVERRIDES[themeName] ?? PINE_TRUNK_FACTOR;
+}
 
 /** Compact mark (crown, base), 4 cells wide — the collapsed header form. */
 export const TREE_CROWN = " /\\ ";
@@ -53,7 +78,8 @@ export function titleBrand(): string {
 }
 
 /**
- * Scale an SGR truecolor foreground sequence's RGB by `factor` (0..1).
+ * Scale an SGR truecolor foreground sequence's RGB by `factor` (any positive
+ * number; individual channels clamp at 255, so factors above 1 are safe).
  * Returns null for anything that is not a plain `38;2;r;g;b` sequence —
  * 256-color and 8-color modes fall back to the single-tone render.
  */

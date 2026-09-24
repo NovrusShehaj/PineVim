@@ -32,11 +32,13 @@ import {
 } from "../../src/piui/completions.js";
 import {
   PINE_CROWN_LINES,
+  PINE_TRUNK_FACTOR_OVERRIDES,
   PINE_TREE,
   PINE_TREE_WIDTH,
   shadeFgAnsi,
-  treeLines,
   titleBrand,
+  treeLines,
+  trunkFactorFor,
 } from "../../src/piui/logo.js";
 import { headerFactory } from "../../src/piui/components/header.js";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
@@ -647,6 +649,35 @@ describe("logo", () => {
     assert.ok(crown.includes("/"));
     assert.ok(base.includes("|"));
   });
+  it("trunkFactorFor: default for unknown/unnamed themes, per-theme overrides", () => {
+    assert.equal(trunkFactorFor(undefined), trunkFactorFor("pinevim-dark"));
+    assert.equal(trunkFactorFor("not-a-theme"), trunkFactorFor("pinevim-dark"));
+    assert.equal(
+      trunkFactorFor("pinevim-neon"),
+      trunkFactorFor("pinevim-dark"),
+    );
+    // Light-background themes lift the trunk (> 1) instead of sinking it.
+    assert.ok(trunkFactorFor("pinevim-snow") > 1, "snow lifts");
+    assert.ok(trunkFactorFor("pinevim-light") > 1, "light lifts");
+  });
+  it("every trunk-factor override key is a shipped PineVIM theme", () => {
+    for (const name of Object.keys(PINE_TRUNK_FACTOR_OVERRIDES)) {
+      assert.ok(
+        isPinevimThemeName(name),
+        `override key ${name} is not a pinevim theme`,
+      );
+    }
+  });
+  it("shadeFgAnsi clamps channels at 255 for factors above 1", () => {
+    assert.equal(
+      shadeFgAnsi("\x1b[38;2;200;200;200m", 2),
+      "\x1b[38;2;255;255;255m",
+    );
+    assert.equal(
+      shadeFgAnsi("\x1b[38;2;12;143;67m", 1.35),
+      "\x1b[38;2;16;193;90m",
+    );
+  });
   it("title brand is ascii-safe", () => {
     assert.match(titleBrand(), /^pinevim$/);
   });
@@ -659,9 +690,14 @@ describe("header", () => {
   // Realistic accent styling: Theme.fg wraps text in the resolved SGR code
   // (a pass-through stub would hide the canopy's ANSI from assertions).
   const ACCENT = "\x1b[38;2;61;255;160m";
-  const makeWith = (width: number, lifecycle: LifecycleState) => {
+  const makeWith = (
+    width: number,
+    lifecycle: LifecycleState,
+    themeName = "pinevim-dark",
+  ) => {
     const tui = { requestRender: () => {} } as never;
     const theme = {
+      name: themeName,
       fg: (role: string, s: string) =>
         role === "accent" ? `${ACCENT}${s}\x1b[0m` : s,
       bold: (s: string) => s,
@@ -687,7 +723,7 @@ describe("header", () => {
         );
       } else {
         assert.ok(
-          line.includes("\x1b[38;2;41;173;109m"),
+          line.includes("\x1b[38;2;37;153;96m"),
           `trunk line ${idx} not in shaded accent`,
         );
       }
@@ -715,6 +751,25 @@ describe("header", () => {
         "unexpected truecolor",
       );
       assert.ok(!line.includes("38;5;"), "shade must not leak 256-color codes");
+    }
+  });
+  it("light themes lift the trunk above the accent instead of sinking it", () => {
+    // Same accent RGB as the dark-theme test, but the theme is snow: the
+    // trunk factor (> 1) must brighten, not darken.
+    const lines = makeWith(120, idle, "pinevim-snow");
+    assert.equal(lines.length, 11);
+    const canopy = "38;2;61;255;160";
+    const lifted = "38;2;82;255;216"; // (61,255,160) * 1.35, clamped
+    for (const [idx, line] of lines.entries()) {
+      if (idx < PINE_CROWN_LINES) {
+        assert.ok(line.includes(canopy), `canopy line ${idx} not in accent`);
+      } else {
+        assert.ok(line.includes(lifted), `trunk line ${idx} not lifted`);
+        assert.ok(
+          !line.includes("38;2;37;153;96m"),
+          "trunk must not use the dark-theme shade",
+        );
+      }
     }
   });
   const bare = (lines: string[]): string =>

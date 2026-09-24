@@ -22,11 +22,11 @@ import { type GlyphSet } from "../glyphs.js";
 import { type LifecycleState } from "../lifecycle.js";
 import {
   PINE_CROWN_LINES,
-  PINE_TRUNK_FACTOR,
   PINE_TREE,
   PINE_TREE_WIDTH,
   shadeFgAnsi,
   treeLines,
+  trunkFactorFor,
 } from "../logo.js";
 
 type RoleStyle = (t: Theme, s: string) => string;
@@ -82,11 +82,16 @@ export class PineHeader extends Container {
     this.tui.requestRender();
   }
 
-  /** The styled two-line compact mark: accent crown, darker trunk. */
+  /** Trunk SGR: the accent scaled by the theme's trunk factor (null off-truecolor). */
+  private trunkAnsi(t: Theme): string | null {
+    return shadeFgAnsi(t.getFgAnsi("accent"), trunkFactorFor(t.name));
+  }
+
+  /** The styled two-line compact mark: accent crown, theme-shaded trunk. */
   private logo(): [string, string] {
     const t = this.theme;
     const [crown, base] = treeLines();
-    const trunk = shadeFgAnsi(t.getFgAnsi("accent"), PINE_TRUNK_FACTOR);
+    const trunk = this.trunkAnsi(t);
     return [
       style("accent", t, crown),
       trunk ? `${trunk}${base}\x1b[0m` : style("accent", t, base),
@@ -104,10 +109,11 @@ export class PineHeader extends Container {
     );
     const ws = fit(i.workspace, sideBudget);
     // Two-tone treatment: the needle canopy renders in the theme accent; the
-    // branch ledge and trunk in the same hue scaled down (see logo.ts). When
-    // the resolved color is not truecolor (256/8-color terminals) the shade
-    // is unavailable and the whole pine stays single-tone — still correct.
-    const trunk = shadeFgAnsi(t.getFgAnsi("accent"), PINE_TRUNK_FACTOR);
+    // branch ledge and trunk in the same hue scaled by the theme's trunk
+    // factor — down for dark themes, up (lifted) for light ones (logo.ts).
+    // When the resolved color is not truecolor (256/8-color terminals) the
+    // shade is unavailable and the whole pine stays single-tone — still correct.
+    const trunk = this.trunkAnsi(t);
     const side: Record<number, string> = {
       0: style("accent", t, i.mode),
       1: `${style("accent", t, "pinevim")} ${style("muted", t, "·")} ${style("text", t, ws)}${style("muted", t, session)}`,
