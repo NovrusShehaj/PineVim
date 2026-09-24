@@ -13,7 +13,7 @@ import {
   ideArgumentCompletions,
   pinevimArgumentCompletions,
 } from "../../piui/completions.js";
-import { applyTheme, themePaths } from "../../piui/theme.js";
+import { applyTheme } from "../../piui/theme.js";
 import type { UiConfig } from "../../config.js";
 export function parseCommand(command: "ide" | "pinevim", args: string): Intent {
   const input = args.trim().split(/\s+/).filter(Boolean).join(" ");
@@ -257,9 +257,11 @@ export default function pinevim(pi: ExtensionAPI): void {
     }
   }
 
-  pi.on("resources_discover", (_event, _context) => ({
-    themePaths: themePaths(),
-  }));
+  // Theme registration note: PineVIM themes are installed into Pi's native
+  // user themes dir by the controller (core/theme-install.ts) BEFORE the pane
+  // spawns. resources_discover intentionally does NOT re-register themePaths:
+  // Pi loads the user dir first and would report every theme as a collision
+  // ("✗ skipped") on startup — pure noise with identical content.
   pi.on("session_shutdown", () => {
     stop();
     pineUi?.dispose();
@@ -286,9 +288,7 @@ export default function pinevim(pi: ExtensionAPI): void {
       // into its built-in provider, which replaces exactly the typed argument
       // text — no custom autocomplete wrapper needed.
       getArgumentCompletions:
-        command === "ide"
-          ? ideArgumentCompletions
-          : pinevimArgumentCompletions,
+        command === "ide" ? ideArgumentCompletions : pinevimArgumentCompletions,
       handler: async (args, context) => {
         try {
           if (!ownership.pinevim || (command === "ide" && !ownership.ide))

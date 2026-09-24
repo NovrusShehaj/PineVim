@@ -21,7 +21,12 @@ import { validateConfig, workspacePath } from "../../src/config.js";
 import { literal, safeError } from "../../src/diagnostics.js";
 import { Framer, parseRecord, MAX_RECORD } from "../../src/control/protocol.js";
 import { parseCommand } from "../../src/adapters/pi/extension.js";
-import { commandOwnership } from "../../src/adapters/pi/compatibility.js";
+import {
+  commandOwnership,
+  probePiApiSurface,
+  assertPiApiSurface,
+} from "../../src/adapters/pi/compatibility.js";
+import { Tmux } from "../../src/adapters/tmux/client.js";
 import {
   shellQuote,
   helperCommand,
@@ -402,4 +407,65 @@ test("terminfo selects screen fallback and reports when neither entry exists", a
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("probePiApiSurface detects available public API hooks", () => {
+  const pi = {
+    registerTool: () => {},
+    registerEntryRenderer: () => {},
+    registerCommand: () => {},
+    registerShortcut: () => {},
+    on: () => {},
+  };
+  const ctx = {
+    ui: {
+      setHeader: () => {},
+      setFooter: () => {},
+      setEditorComponent: () => {},
+      setWidget: () => {},
+      setWorkingIndicator: () => {},
+    },
+  };
+  const report = probePiApiSurface(pi, ctx);
+  assert.equal(report.hasSetHeader, true);
+  assert.equal(report.hasSetFooter, true);
+  assert.equal(report.hasSetEditorComponent, true);
+  assert.equal(report.hasSetWidget, true);
+  assert.equal(report.hasSetWorkingIndicator, true);
+  assert.equal(report.hasRegisterTool, true);
+  assert.equal(report.hasRegisterEntryRenderer, true);
+  assert.equal(report.hasRegisterCommand, true);
+  assert.equal(report.hasRegisterShortcut, true);
+  assert.equal(report.hasOn, true);
+  assert.doesNotThrow(() => assertPiApiSurface(pi, ctx));
+});
+
+test("assertPiApiSurface throws PineError when hooks are missing", () => {
+  assert.throws(
+    () => assertPiApiSurface({}, {}),
+    /Incompatible Pi API surface; missing: ctx\.ui\.setHeader/,
+  );
+});
+
+test("TmuxClient notify adds severity prefixes and respects existing prefix", async () => {
+  class TestTmux extends Tmux {
+    readonly calls: string[][] = [];
+    override async command(...args: string[]): Promise<string> {
+      this.calls.push(args);
+      return "";
+    }
+  }
+  const client = new TestTmux("tmux", "/fake/runtime");
+
+  await client.notify("something went wrong", "error");
+  assert.equal(client.calls[0]?.[3], "pinevim error: something went wrong");
+
+  await client.notify("caution advised", "warning");
+  assert.equal(client.calls[1]?.[3], "pinevim warning: caution advised");
+
+  await client.notify("status update", "info");
+  assert.equal(client.calls[2]?.[3], "pinevim: status update");
+
+  await client.notify("pinevim: already prefixed");
+  assert.equal(client.calls[3]?.[3], "pinevim: already prefixed");
 });

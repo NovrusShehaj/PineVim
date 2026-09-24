@@ -16,6 +16,7 @@ import {
   isPanelAction,
 } from "../adapters/tmux/panels.js";
 import { parseTelemetryLine } from "../piui/lifecycle.js";
+import { installThemesToPi } from "./theme-install.js";
 import { piCommand } from "../adapters/pi/adapter.js";
 import { ControlServer, type ClientIdentity } from "../control/server.js";
 import {
@@ -121,6 +122,11 @@ export class AppController {
   async start(resume = false, picker = false): Promise<void> {
     await this.enqueue(async () => {
       await this.server.listen();
+      // Install bundled themes into Pi's native themes dir BEFORE the agent
+      // pane spawns: Pi resolves a persisted theme name at startup, before
+      // extension discovery runs, so an extension-only registration would
+      // fail with "Theme not found" on the launch after a /settings pick.
+      await installThemesToPi();
       if (!resume) {
         await this.tmux.configure(this.config.prefix);
         // Publish runtime identity before a child can exist. If the controller dies

@@ -32,12 +32,7 @@ import { fit, type GlyphSet } from "../glyphs.js";
 import { formatDuration } from "./turnSummary.js";
 
 export type ToolCardState =
-  | "running"
-  | "success"
-  | "warning"
-  | "failure"
-  | "interrupted"
-  | "waiting";
+  "running" | "success" | "warning" | "failure" | "interrupted" | "waiting";
 
 export interface ToolCardInfo {
   tool: string;
@@ -143,7 +138,8 @@ export function extractToolArgs(
       const path = str(args.path ?? args.file_path);
       const content = typeof args.content === "string" ? args.content : "";
       const bytes = new TextEncoder().encode(content).length;
-      const sizeStr = bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KiB`;
+      const sizeStr =
+        bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KiB`;
       return { primary: path, secondary: sizeStr };
     }
 
@@ -264,11 +260,18 @@ export class ToolCardComponent extends Container {
     const line = formatToolCardLine(this.info, this.g, 100);
     this.headerText.setText(this.theme.fg(role, line));
 
-    if (this.info.expanded && this.info.previewLines && this.info.previewLines.length > 0) {
+    if (
+      this.info.expanded &&
+      this.info.previewLines &&
+      this.info.previewLines.length > 0
+    ) {
       const rail = this.g.rail;
       const formatted = this.info.previewLines
         .slice(0, 10)
-        .map((l) => `${this.theme.fg("muted", rail)}   ${this.theme.fg("toolOutput", l)}`)
+        .map(
+          (l) =>
+            `${this.theme.fg("muted", rail)}   ${this.theme.fg("toolOutput", l)}`,
+        )
         .join("\n");
       if (!this.bodyText) {
         this.bodyText = new Text("", 0, 0);

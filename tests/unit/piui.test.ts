@@ -46,6 +46,24 @@ import {
   TURN_SUMMARY_TYPE,
 } from "../../src/piui/renderers/turnSummary.js";
 import { readdirSync, readFileSync } from "node:fs";
+import {
+  toolStateGlyph,
+  toolStateRole,
+  formatDiffstat,
+  extractToolArgs,
+  formatToolCardLine,
+  ToolCardComponent,
+  type ToolCardInfo,
+} from "../../src/piui/renderers/cards.js";
+import {
+  PineComposer,
+  type ComposerInfo,
+} from "../../src/piui/components/composer.js";
+import {
+  type EditorTheme,
+  type TUI,
+  KeybindingsManager,
+} from "@earendil-works/pi-tui";
 
 describe("glyphs", () => {
   it("every unicode glyph has an ascii fallback with the same key", () => {
@@ -512,9 +530,10 @@ describe("slash completions", () => {
       (ideArgumentCompletions("o") ?? []).map((i) => i.value),
       ["open"],
     );
-    assert.deepEqual((ideArgumentCompletions("cl") ?? []).map((i) => i.value), [
-      "close",
-    ]);
+    assert.deepEqual(
+      (ideArgumentCompletions("cl") ?? []).map((i) => i.value),
+      ["close"],
+    );
     assert.equal(ideArgumentCompletions("zzz"), null);
   });
 
@@ -538,37 +557,31 @@ describe("slash completions", () => {
 });
 
 describe("logo", () => {
-  it("tree lines are exactly one cell per glyph (no emoji drift)", () => {
-    for (const lines of [treeLines("unicode"), treeLines("ascii")]) {
-      for (const line of lines) {
-        for (const ch of line) {
-          if (ch === " ") continue;
-          const cp = ch.codePointAt(0)!;
-          // All glyphs must live in the BMP and outside the emoji blocks:
-          // pi-tui measures emoji at 2 cells while several terminals render
-          // them at 1, which would drift the header's right alignment.
-          assert.ok(cp < 0x1f000, `glyph U+${cp.toString(16)} may be wide`);
-        }
-      }
+  it("the mark is pure ASCII — one cell per glyph under every width model", () => {
+    // pi-tui measures emoji and some symbols at 2 cells while several
+    // terminals render them at 1; ASCII keeps the header arithmetic exact.
+    for (const line of treeLines()) {
+      assert.match(
+        line,
+        /^[ -~]*$/,
+        `non-ASCII glyph in ${JSON.stringify(line)}`,
+      );
     }
   });
-  it("ascii fallback keeps the same two-line shape", () => {
-    const [uCrown, uBase] = treeLines("unicode");
-    const [aCrown, aBase] = treeLines("ascii");
-    assert.equal([...uCrown].length, [...aCrown].length);
-    assert.equal([...uBase].length, [...aBase].length);
-    assert.match(aCrown, /\^/);
-    assert.match(aBase, /\//);
+  it("crown and base share the same cell width", () => {
+    const [crown, base] = treeLines();
+    assert.equal(crown.length, base.length);
+    assert.ok(crown.includes("/"));
+    assert.ok(base.includes("|"));
   });
-  it("title brand is ascii-safe in ascii mode", () => {
-    assert.match(titleBrand("ascii"), /^pinevim$/);
-    assert.match(titleBrand("unicode"), /pinevim$/);
+  it("title brand is ascii-safe", () => {
+    assert.match(titleBrand(), /^pinevim$/);
   });
 });
 
 describe("header", () => {
   const g = glyphs("unicode");
-  const make = (width: number, glyphMode: "unicode" | "ascii" = "unicode") => {
+  const make = (width: number) => {
     const tui = { requestRender: () => {} } as never;
     const theme = {
       fg: (_role: string, s: string) => s,
@@ -580,7 +593,7 @@ describe("header", () => {
       mode: "CHAT" as const,
       lifecycle: initialLifecycle(),
     };
-    return headerFactory(tui, theme, g, info, glyphMode).render(width);
+    return headerFactory(tui, theme, g, info).render(width);
   };
 
   it("renders the pine logo and wordmark in the wide band", () => {
@@ -588,8 +601,8 @@ describe("header", () => {
     assert.ok(lines.length >= 2, "logo band + identity line expected");
     const bare = lines.map(stripTerminalSequences).join("\n");
     assert.match(bare, /pinevim/);
-    assert.match(bare, /▲/);
-    assert.match(bare, /\/\|\\/);
+    assert.match(bare, /\/\\/);
+    assert.match(bare, /\/\|\|\\/);
     assert.match(bare, /CHAT/);
   });
 
@@ -609,11 +622,242 @@ describe("header", () => {
   it("suppresses below 60 columns", () => {
     assert.deepEqual(make(59), []);
   });
+});
 
-  it("ascii glyph mode swaps the crown, keeps alignment", () => {
-    const lines = make(100, "ascii");
-    const bare = lines.map(stripTerminalSequences).join("\n");
-    assert.match(bare, /\^/);
-    assert.doesNotMatch(bare, /▲/);
+describe("cards", () => {
+  const u = UNICODE;
+  const a = ASCII;
+
+  it("returns correct glyph for each state in unicode and ascii", () => {
+    assert.equal(toolStateGlyph("running", u), "●");
+    assert.equal(toolStateGlyph("success", u), "✓");
+    assert.equal(toolStateGlyph("warning", u), "▲");
+    assert.equal(toolStateGlyph("failure", u), "✗");
+    assert.equal(toolStateGlyph("interrupted", u), "⏸");
+    assert.equal(toolStateGlyph("waiting", u), "?");
+
+    assert.equal(toolStateGlyph("running", a), "*");
+    assert.equal(toolStateGlyph("success", a), "+");
+    assert.equal(toolStateGlyph("warning", a), "!");
+    assert.equal(toolStateGlyph("failure", a), "x");
+    assert.equal(toolStateGlyph("interrupted", a), "=");
+    assert.equal(toolStateGlyph("waiting", a), "?");
+  });
+
+  it("returns correct theme role for each state", () => {
+    assert.equal(toolStateRole("running"), "text");
+    assert.equal(toolStateRole("success"), "success");
+    assert.equal(toolStateRole("warning"), "warning");
+    assert.equal(toolStateRole("failure"), "error");
+    assert.equal(toolStateRole("interrupted"), "warning");
+    assert.equal(toolStateRole("waiting"), "accent");
+  });
+
+  it("formats diffstats in unicode and ascii", () => {
+    assert.equal(formatDiffstat(12, 3, false), "+12 −3");
+    assert.equal(formatDiffstat(12, 3, true), "+12 -3");
+  });
+
+  it("extracts primary and secondary args across tool types", () => {
+    assert.deepEqual(
+      extractToolArgs("read", { path: "src/foo.ts", offset: 10, limit: 20 }),
+      {
+        primary: "src/foo.ts",
+        secondary: "lines 10–29",
+      },
+    );
+    assert.deepEqual(
+      extractToolArgs("read", { path: "src/foo.ts", offset: 5 }),
+      {
+        primary: "src/foo.ts",
+        secondary: "from line 5",
+      },
+    );
+    assert.deepEqual(extractToolArgs("edit", { path: "src/foo.ts" }), {
+      primary: "src/foo.ts",
+    });
+    assert.deepEqual(
+      extractToolArgs("write", { path: "hello.txt", content: "hello world" }),
+      {
+        primary: "hello.txt",
+        secondary: "11 B",
+      },
+    );
+    assert.deepEqual(
+      extractToolArgs("bash", { command: "npm   test\n--verbose" }),
+      {
+        primary: "npm test --verbose",
+      },
+    );
+    assert.deepEqual(
+      extractToolArgs("grep", { pattern: "todo", path: "src" }),
+      {
+        primary: '"todo" src',
+      },
+    );
+    assert.deepEqual(
+      extractToolArgs("find", { query: "auth check", path: "src" }),
+      {
+        primary: '"auth check" src',
+      },
+    );
+    assert.deepEqual(extractToolArgs("ls", { path: "src/core" }), {
+      primary: "src/core",
+    });
+    assert.deepEqual(extractToolArgs("custom", { target: "my-target" }), {
+      primary: "my-target",
+    });
+  });
+
+  it("formats tool card line responsively across width bands", () => {
+    const info: ToolCardInfo = {
+      tool: "bash",
+      state: "success",
+      primaryArg: "npm test",
+      secondaryArg: "cached",
+      counts: "2 runs",
+      durationSeconds: 1.5,
+    };
+
+    // >= 101 cols
+    const w110 = formatToolCardLine(info, u, 110);
+    assert.match(w110, /✓ bash npm test/);
+    assert.match(w110, /cached/);
+    assert.match(w110, /2 runs/);
+    assert.match(w110, /1\.5 s/);
+
+    // 80-100 cols (no secondaryArg)
+    const w90 = formatToolCardLine(info, u, 90);
+    assert.match(w90, /✓ bash npm test/);
+    assert.doesNotMatch(w90, /cached/);
+    assert.match(w90, /2 runs/);
+    assert.match(w90, /1\.5 s/);
+
+    // 60-79 cols (no secondaryArg, no counts)
+    const w70 = formatToolCardLine(info, u, 70);
+    assert.match(w70, /✓ bash npm test/);
+    assert.doesNotMatch(w70, /2 runs/);
+    assert.match(w70, /1\.5 s/);
+
+    // < 60 cols (name + glyph only)
+    const w50 = formatToolCardLine(info, u, 50);
+    assert.equal(w50, "✓ bash");
+  });
+
+  it("ToolCardComponent renders collapsed and expanded states", () => {
+    const tui = { requestRender: () => {} } as never;
+    const theme = { fg: (_role: string, s: string) => s } as never;
+    const info: ToolCardInfo = {
+      tool: "read",
+      state: "success",
+      primaryArg: "src/main.ts",
+      previewLines: ["line 1", "line 2"],
+    };
+
+    const card = new ToolCardComponent(tui, theme, u, info);
+    const collapsed = card.render(100).join("\n");
+    assert.match(collapsed, /✓ read src\/main\.ts/);
+    assert.doesNotMatch(collapsed, /line 1/);
+
+    card.setExpanded(true);
+    const expanded = card.render(100).join("\n");
+    assert.match(expanded, /✓ read src\/main\.ts/);
+    assert.match(expanded, /│\s+line 1/);
+    assert.match(expanded, /│\s+line 2/);
+  });
+});
+
+describe("composer", () => {
+  class TestComposer extends PineComposer {
+    public testTopBorder(width: number, hiddenLines = 0): string {
+      return this.renderTopBorder(width, hiddenLines);
+    }
+    public testBottomBorder(width: number, hiddenLines = 0): string {
+      return this.renderBottomBorder(width, hiddenLines);
+    }
+  }
+
+  const makeComposer = (infoOverrides: Partial<ComposerInfo> = {}) => {
+    const tui: TUI = { requestRender: () => {} } as never;
+    const editorTheme: EditorTheme = {
+      borderColor: (s: string) => s,
+      selectList: {
+        selectedPrefix: (s: string) => s,
+        selectedText: (s: string) => s,
+        description: (s: string) => s,
+        scrollInfo: (s: string) => s,
+        noMatch: (s: string) => s,
+      },
+    };
+    const keybindings = new KeybindingsManager({} as never) as never;
+    const info: ComposerInfo = {
+      mode: "CHAT",
+      lifecycle: initialLifecycle(),
+      ctxPercent: 42,
+      model: "gpt-5",
+      thinking: "medium",
+      prefix: "F12",
+      ...infoOverrides,
+    };
+    return new TestComposer(tui, editorTheme, keybindings, UNICODE, info);
+  };
+
+  it("initializes with embedWorkingStatus: true", () => {
+    const composer = makeComposer();
+    assert.equal(composer.embedWorkingStatus, true);
+  });
+
+  it("renders top border with chips and shortcut hint at >=80 cols", () => {
+    const composer = makeComposer();
+    const top = composer.testTopBorder(100);
+    assert.match(top, /CHAT/);
+    assert.match(top, /idle/);
+    assert.match(top, /F12 \? keys/);
+  });
+
+  it("suppresses shortcut hint in top border at <80 cols", () => {
+    const composer = makeComposer();
+    const top = composer.testTopBorder(75);
+    assert.match(top, /CHAT/);
+    assert.match(top, /idle/);
+    assert.doesNotMatch(top, /F12 \? keys/);
+  });
+
+  it("renders top border scroll indicator when hidden lines exist above", () => {
+    const composer = makeComposer();
+    const top = composer.testTopBorder(100, 5);
+    assert.match(top, /↑ 5 more/);
+  });
+
+  it("renders bottom border with gauge, model, thinking, and send hint at >=80 cols", () => {
+    const composer = makeComposer();
+    const bottom = composer.testBottomBorder(100);
+    assert.match(bottom, /42%/);
+    assert.match(bottom, /gpt-5/);
+    assert.match(bottom, /think med/);
+    assert.match(bottom, /⏎ send/);
+  });
+
+  it("suppresses send hint and thinking chip in bottom border at <80 cols", () => {
+    const composer = makeComposer();
+    const bottom = composer.testBottomBorder(75);
+    assert.match(bottom, /42%/);
+    assert.match(bottom, /gpt-5/);
+    assert.doesNotMatch(bottom, /⏎ send/);
+  });
+
+  it("renders bottom border scroll indicator when hidden lines exist below", () => {
+    const composer = makeComposer();
+    const bottom = composer.testBottomBorder(100, 8);
+    assert.match(bottom, /↓ 8 more/);
+  });
+
+  it("updates state through update()", () => {
+    const composer = makeComposer();
+    composer.update({ mode: "IDE", model: "claude-3-7" });
+    const top = composer.testTopBorder(100);
+    const bottom = composer.testBottomBorder(100);
+    assert.match(top, /IDE/);
+    assert.match(bottom, /claude-3-7/);
   });
 });

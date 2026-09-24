@@ -42,6 +42,8 @@ import {
   type TurnSummaryData,
 } from "./renderers/turnSummary.js";
 import type { UiConfig } from "../config.js";
+export * from "./renderers/cards.js";
+export * from "./components/composer.js";
 
 /** Hook probe result used by the compatibility gate. */
 export interface PiUiHooks {
@@ -156,18 +158,12 @@ export class PiUi {
       ui.setHeader((tui, theme) => {
         this.tui = tui;
         if (!this.header) {
-          this.header = headerFactory(
-            tui,
-            theme,
-            this.g,
-            {
-              workspace: workspaceDisplay(ctx.cwd),
-              sessionName: this.pi.getSessionName?.() ?? null,
-              mode: this.mode,
-              lifecycle: this.state,
-            },
-            this.ui.glyphs,
-          );
+          this.header = headerFactory(tui, theme, this.g, {
+            workspace: workspaceDisplay(ctx.cwd),
+            sessionName: this.pi.getSessionName?.() ?? null,
+            mode: this.mode,
+            lifecycle: this.state,
+          });
         }
         return this.header;
       });
@@ -176,7 +172,13 @@ export class PiUi {
       ui.setFooter((tui, theme, footerData) => {
         this.tui = tui;
         if (!this.deck) {
-          this.deck = deckFactory(tui, theme, footerData, this.g, this.deckInfo());
+          this.deck = deckFactory(
+            tui,
+            theme,
+            footerData,
+            this.g,
+            this.deckInfo(),
+          );
         }
         return this.deck;
       });
@@ -209,7 +211,7 @@ export class PiUi {
       // Brand the terminal title (replaces Pi's "π - …" prefix). Best-effort:
       // non-TUI contexts and embedding hosts may not implement setTitle.
       try {
-        ui.setTitle?.(titleBrand(this.ui.glyphs));
+        ui.setTitle?.(titleBrand());
       } catch {
         /* title branding is cosmetic; never fail the install for it */
       }

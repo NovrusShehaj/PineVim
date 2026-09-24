@@ -1,33 +1,23 @@
 /**
  * PineVIM brand assets: the pine-tree logo that replaces Pi's built-in "π"
- * wordmark in the header chrome and terminal title.
+ * wordmark in the header chrome and the terminal title.
  *
- * Design constraints (verified against pi-tui's width engine):
- * - no emoji: 🌲 (U+1F332) measures 2 cells via get-east-asian-width but
- *   renders 1 cell in many macOS terminals, which drifts right-alignment;
- * - every glyph below occupies exactly one terminal cell in every font
- *   pi-tui's eastAsianWidth model knows about, so alignment math is exact;
- * - color is applied by the header through the theme's accent role, so the
- *   tree renders bright pine green in the color themes and plain white/bright
- *   in pinevim-mono (color is the theme's decision, shape is fixed).
+ * The mark is deliberately pure ASCII: "/\" crown over "/||\" trunk. Every
+ * glyph occupies exactly one terminal cell under every width model (pi-tui's
+ * get-east-asian-width included), so the header's alignment arithmetic is
+ * exact, and no Unicode/ASCII glyph-mode divergence is needed — the ASCII
+ * fallback for the mark is the mark itself. Color is applied by the header
+ * through the theme's accent role, so the tree recolors with every theme.
  */
-import type { GlyphMode } from "./glyphs.js";
+export const TREE_CROWN = " /\\ ";
+export const TREE_BASE = "/||\\";
 
-/**
- * Two-line pine outline: crown + base, 3 cells wide.
- * `▲` over `/|\` reads as a pine at a glance and survives copy/paste.
- */
-export const TREE_UNICODE = [" ▲ ", "/|\\"] as const;
-
-/** ASCII fallback (ui.glyphs = "ascii"): same shape, safest glyphs. */
-export const TREE_ASCII = [" ^ ", "/|\\"] as const;
-
-/** The logo lines for the configured glyph mode (crown, base). */
-export function treeLines(mode: GlyphMode): readonly [string, string] {
-  return mode === "ascii" ? TREE_ASCII : TREE_UNICODE;
+/** The logo lines (crown, base), 4 cells wide each. */
+export function treeLines(): readonly [string, string] {
+  return [TREE_CROWN, TREE_BASE];
 }
 
-/** Terminal title prefix (ascii-safe when the ASCII vocabulary is forced). */
-export function titleBrand(mode: GlyphMode): string {
-  return mode === "ascii" ? "pinevim" : "▲ pinevim";
+/** Terminal title prefix (pure ASCII — window chrome fonts vary). */
+export function titleBrand(): string {
+  return "pinevim";
 }

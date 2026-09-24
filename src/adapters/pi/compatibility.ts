@@ -71,10 +71,19 @@ export interface PiApiSurfaceReport {
 }
 
 /** Probe the public API surface of Pi and its extension context. */
-export function probePiApiSurface(pi: unknown, ctx: unknown): PiApiSurfaceReport {
+export function probePiApiSurface(
+  pi: unknown,
+  ctx: unknown,
+): PiApiSurfaceReport {
   const p = (pi && typeof pi === "object" ? pi : {}) as Record<string, unknown>;
-  const c = (ctx && typeof ctx === "object" ? ctx : {}) as Record<string, unknown>;
-  const ui = (c.ui && typeof c.ui === "object" ? c.ui : {}) as Record<string, unknown>;
+  const c = (ctx && typeof ctx === "object" ? ctx : {}) as Record<
+    string,
+    unknown
+  >;
+  const ui = (c.ui && typeof c.ui === "object" ? c.ui : {}) as Record<
+    string,
+    unknown
+  >;
   return {
     hasSetHeader: typeof ui.setHeader === "function",
     hasSetFooter: typeof ui.setFooter === "function",
@@ -100,9 +109,11 @@ export function assertPiApiSurface(pi: unknown, ctx: unknown): void {
   if (!report.hasSetFooter) missing.push("ctx.ui.setFooter");
   if (!report.hasSetEditorComponent) missing.push("ctx.ui.setEditorComponent");
   if (!report.hasSetWidget) missing.push("ctx.ui.setWidget");
-  if (!report.hasSetWorkingIndicator) missing.push("ctx.ui.setWorkingIndicator");
+  if (!report.hasSetWorkingIndicator)
+    missing.push("ctx.ui.setWorkingIndicator");
   if (!report.hasRegisterTool) missing.push("pi.registerTool");
-  if (!report.hasRegisterEntryRenderer) missing.push("pi.registerEntryRenderer");
+  if (!report.hasRegisterEntryRenderer)
+    missing.push("pi.registerEntryRenderer");
   if (!report.hasRegisterCommand) missing.push("pi.registerCommand");
   if (!report.hasRegisterShortcut) missing.push("pi.registerShortcut");
   if (!report.hasOn) missing.push("pi.on");
