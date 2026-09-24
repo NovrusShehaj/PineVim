@@ -1,19 +1,28 @@
 import type {
   ExtensionAPI,
   ExtensionContext,
+  Theme,
 } from "@earendil-works/pi-coding-agent";
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { connect, identity } from "../../control/client.js";
 import type { Peer } from "../../control/protocol.js";
 import { commandOwnership } from "./compatibility.js";
-import { safeError, PineError } from "../../diagnostics.js";
+import { userFacing, recoveryCopy, PineError } from "../../diagnostics.js";
 import type { Intent } from "../../core/state.js";
 import { PiUi, hooksSatisfied, probeHooks } from "../../piui/index.js";
 import {
   ideArgumentCompletions,
   pinevimArgumentCompletions,
 } from "../../piui/completions.js";
-import { applyTheme } from "../../piui/theme.js";
+import {
+  applyTheme,
+  autoPinevimTheme,
+  isPinevimThemeName,
+} from "../../piui/theme.js";
+import { planReport } from "../../piui/report-gate.js";
+import { handlePinevimLocal } from "../../piui/local-commands.js";
+import { skillsRoot } from "../../skills/registry.js";
 import type { UiConfig } from "../../config.js";
 export function parseCommand(command: "ide" | "pinevim", args: string): Intent {
   const input = args.trim().split(/\s+/).filter(Boolean).join(" ");
@@ -39,6 +48,22 @@ export function parseCommand(command: "ide" | "pinevim", args: string): Intent {
     );
   return intent;
 }
+function applyConfiguredTheme(
+  ui: {
+    theme: Theme;
+    getTheme: (name: string) => Theme | undefined;
+    setTheme: (theme: string | Theme) => { success: boolean; error?: string };
+  },
+  cfg: UiConfig,
+): void {
+  if (cfg.theme && cfg.theme !== "auto" && isPinevimThemeName(cfg.theme)) {
+    applyTheme(ui, cfg.theme);
+    return;
+  }
+  const next = autoPinevimTheme(ui.theme?.name);
+  if (next) applyTheme(ui, next);
+}
+
 export default function pinevim(pi: ExtensionAPI): void {
   const runtime = process.env.PINEVIM_RUNTIME;
   if (!runtime) return;
@@ -61,6 +86,34 @@ export default function pinevim(pi: ExtensionAPI): void {
     prefix: process.env.PINEVIM_UI_PREFIX ?? "F12",
   });
   let pineUi: PiUi | null = null;
+  let lastSent = "";
+  let reportTimer: ReturnType<typeof setTimeout> | null = null;
+  const considerReport = (): void => {
+    const next = pineUi?.telemetryLine() ?? "";
+    const decision = planReport(lastSent, next, reportTimer !== null);
+    if (decision.sendNow) {
+      if (reportTimer) clearTimeout(reportTimer);
+      reportTimer = null;
+      lastSent = next;
+      void report();
+      return;
+    }
+    if (decision.armTimer && !reportTimer) {
+      reportTimer = setTimeout(() => {
+        reportTimer = null;
+        const line = pineUi?.telemetryLine() ?? "";
+        if (line && line !== lastSent) {
+          lastSent = line;
+          void report();
+        }
+      }, 1000);
+    }
+  };
+  pi.on("resources_discover", () => {
+    const dir = skillsRoot();
+    if (!existsSync(dir)) return undefined;
+    return { skillPaths: [dir] };
+  });
   const data = (): Record<string, unknown> => ({
     cwd: ctx!.cwd,
     sessionId: ctx!.sessionManager.getSessionId(),
@@ -109,10 +162,14 @@ export default function pinevim(pi: ExtensionAPI): void {
         if (
           current !== peer ||
           m.generation !== generation ||
-          m.epoch !== epoch ||
-          m.type !== "shutdown" ||
-          !ctx
+          m.epoch !== epoch
         )
+          throw new PineError("STALE", "Stale Pi context.");
+        if (m.type === "view") {
+          pineUi?.setMode(m.payload.mode === "IDE" ? "IDE" : "CHAT");
+          return {};
+        }
+        if (m.type !== "shutdown" || !ctx)
           throw new PineError("STALE", "Stale Pi context.");
         if ((!ctx.isIdle() || ctx.hasPendingMessages()) && !m.payload.cancel)
           throw new PineError(
@@ -234,26 +291,13 @@ export default function pinevim(pi: ExtensionAPI): void {
         return;
       }
       pineUi = new PiUi(api, context, context.ui.theme, cfg);
+      pineUi.onTelemetry = considerReport;
       pineUi.install();
-      // Non-persistent theme application (plan §12): Theme *instance* never
-      // writes settings.json. A failure means the name was unavailable —
-      // degrade silently; the user's current theme stays active. "auto" keeps
-      // the theme Pi already resolved (its detection covers terminal
-      // background / COLORFGBG); only an explicit pinevim-* name switches.
-      if (
-        cfg.theme &&
-        cfg.theme !== "auto" &&
-        typeof context.ui.getTheme === "function"
-      ) {
-        applyTheme(context.ui, cfg.theme);
-      }
-    } catch (e) {
+      applyConfiguredTheme(context.ui, cfg);
+    } catch {
       pineUi?.dispose();
       pineUi = null;
-      context.ui.notify(
-        `PineVim UI failed to install; running stock Pi chat. ${safeError(e)}`,
-        "warning",
-      );
+      context.ui.notify(recoveryCopy("UI"), "warning");
     }
   }
 
@@ -301,6 +345,11 @@ export default function pinevim(pi: ExtensionAPI): void {
               "DISCONNECTED",
               "PineVim controller disconnected. Use pinevim --resume from the workspace.",
             );
+          if (
+            command === "pinevim" &&
+            (await handlePinevimLocal(args, context, pineUi))
+          )
+            return;
           const intent = parseCommand(command, args);
           const reply = await peer.request(
             "intent",
@@ -314,7 +363,7 @@ export default function pinevim(pi: ExtensionAPI): void {
           else if (intent === "chat") pineUi?.setMode("CHAT");
           if (reply.message) context.ui.notify(String(reply.message), "info");
         } catch (e) {
-          context.ui.notify(safeError(e), "warning");
+          context.ui.notify(userFacing(e), "warning");
         }
       },
     });

@@ -57,7 +57,7 @@ export function validateConfig(input: unknown): Config {
     if (!Object.hasOwn(defaults, key))
       throw new PineError(
         "CONFIG",
-        "Unknown field in PineVim config; allowed: prefix, agentRatio, pi, nvim, tmux, logLevel.",
+        "Unknown field in PineVim config; allowed: prefix, agentRatio, pi, nvim, tmux, logLevel, ui.",
       );
     switch (key) {
       case "prefix":

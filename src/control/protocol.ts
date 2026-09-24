@@ -14,6 +14,7 @@ export const messageTypes = [
   "event",
   "shutdown",
   "confirm",
+  "view",
   "ack",
   "result",
 ] as const;
@@ -94,6 +95,7 @@ export function parseRecord(line: string): RecordMessage {
     confirm: ["nonce", "action"],
     ack: [],
     result: ["ok", "code", "message", "epoch", "generation"],
+    view: ["mode", "focus"],
   };
   if (Object.keys(p).some((k) => !allowed[v.type as MessageType].includes(k)))
     throw new PineError("PROTOCOL", "Unknown control payload field.");
@@ -123,6 +125,11 @@ export function parseRecord(line: string): RecordMessage {
     case "confirm":
       valid =
         text(p.nonce, 80) && (p.action === "quit" || p.action === "retry");
+      break;
+    case "view":
+      valid =
+        (p.mode === "CHAT" || p.mode === "IDE") &&
+        (p.focus === "agent" || p.focus === "editor");
       break;
     case "result":
       valid =
@@ -196,9 +203,12 @@ interface Pending {
   generation: number;
   epoch: string;
 }
+const SEEN_WINDOW = 1024;
 export class Peer extends EventEmitter {
   private pending = new Map<string, Pending>();
+  /** Recent request ids. Oldest ids fall out of the window; the socket stays open. */
   private seen = new Set<string>();
+  private seenOrder: string[] = [];
   private incoming = 0;
   private framer = new Framer();
   closed = false;
@@ -293,16 +303,20 @@ export class Peer extends EventEmitter {
       }
       return;
     }
-    // Duplicates are never executed twice; no retransmission/replay after lost replies.
-    if (
-      this.seen.has(m.requestId) ||
-      this.incoming >= MAX_QUEUE ||
-      this.seen.size >= 1024
-    ) {
+    // Duplicates inside the window are ignored. A full window prunes the
+    // oldest id instead of closing a healthy peer. In-flight overflow still
+    // closes, because that is a burst the handler cannot drain.
+    if (this.incoming >= MAX_QUEUE) {
       this.close();
       return;
     }
+    if (this.seen.has(m.requestId)) return;
     this.seen.add(m.requestId);
+    this.seenOrder.push(m.requestId);
+    while (this.seenOrder.length > SEEN_WINDOW) {
+      const oldest = this.seenOrder.shift();
+      if (oldest) this.seen.delete(oldest);
+    }
 
     this.incoming++;
     this.send({ ...m, type: "ack", payload: {} });

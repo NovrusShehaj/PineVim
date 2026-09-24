@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { executable, loadConfig, workspacePath } from "./config.js";
-import { safeError, PineError } from "./diagnostics.js";
+import { userFacing, PineError } from "./diagnostics.js";
 import { Store, requireDeadChildren } from "./persistence.js";
 import { piExecutable } from "./adapters/pi/adapter.js";
 import { Tmux } from "./adapters/tmux/client.js";
@@ -210,6 +210,6 @@ async function main(): Promise<void> {
   }
 }
 main().catch((error) => {
-  console.error(safeError(error));
+  console.error(userFacing(error));
   process.exitCode = 1;
 });

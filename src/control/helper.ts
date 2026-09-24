@@ -1,8 +1,23 @@
 #!/usr/bin/env node
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { connect, identity } from "./client.js";
 import type { MessageType } from "./protocol.js";
 const [runtime, action, nonce] = process.argv.slice(2);
-if (runtime && action) {
+if (runtime && action === "popup") {
+  try {
+    const text = await readFile(join(runtime, "popup.txt"), "utf8");
+    process.stdout.write(text.endsWith("\n") ? text : `${text}\n`);
+    process.stdout.write("press a key\n");
+    if (process.stdin.isTTY) process.stdin.setRawMode(true);
+    process.stdin.resume();
+    await new Promise<void>((resolve) => {
+      process.stdin.once("data", () => resolve());
+    });
+  } catch {
+    process.exitCode = 1;
+  }
+} else if (runtime && action) {
   let peer;
   try {
     peer = await connect(runtime);

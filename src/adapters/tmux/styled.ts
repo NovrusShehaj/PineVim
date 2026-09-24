@@ -1,19 +1,12 @@
 /**
- * Styled tmux writers (plan §7.3, §23, §27): PineVIM-authored strings may
- * carry SGR color and tmux style attributes. The trust boundary is explicit:
+ * Styled tmux writers.
  *
- * - `styleLiteral` is for CONSTANT PineVIM text only (labels, separators).
- * - Every dynamic value (workspace, session, branch, model, errors) must be
- *   passed through `plain()`-equivalent escaping FIRST (diagnostics.plain
- *   maps non-printables to '?'), then wrapped with `tputAf`-style SGR by the
- *   assembler - never interpolated into tmux format strings.
- * - `#` doubling happens at the very end (tmux format escaping), matching
- *   the existing diagnostics.literal() behavior.
+ * Status-left uses tmux `#[fg=colourN]` attributes, not raw SGR. tmux treats
+ * `#` as a format introducer, so style tokens are assembled after dynamic
+ * text has had its `#` doubled. Dynamic text is passed through `plain()`
+ * first. The status option must contain no ESC byte.
  *
- * Color is applied as raw SGR wrapped in #{?} nothing - tmux status-left
- * accepts embedded SGR sequences directly; they count toward the 250-cell
- * budget only by their visible width, but the option itself is capped, so
- * assemblers enforce a conservative text budget (statusline.ts).
+ * `sgr()` remains for in-process strings that are not written to status-left.
  */
 
 /** Truecolor/256 SGR foreground wrapper for a trusted role color. */
@@ -34,6 +27,22 @@ export function sgr(role: SgrRole, text: string): string {
   return `${SGR[role]}${text}${SGR.reset}`;
 }
 
+/** 256-color indexes. Legible on dark and light; not a per-theme hex match. */
+const TMUX_COLOUR: Record<Exclude<SgrRole, "reset">, string> = {
+  accent: "colour72",
+  muted: "colour245",
+  success: "colour71",
+  warning: "colour178",
+  error: "colour167",
+  text: "colour252",
+};
+
+/** Wrap trusted text in a tmux status style, or return it unchanged. */
+export function tmuxFg(role: SgrRole, text: string, color = true): string {
+  if (!color || role === "reset") return text;
+  return `#[fg=${TMUX_COLOUR[role]}]${text}#[default]`;
+}
+
 /**
  * Escape a string for safe inclusion in a tmux option value:
  * doubles `#` (tmux format escaping). Input must already be printable-only
@@ -45,10 +54,10 @@ export function escapeTmuxFormat(text: string): string {
 
 /** Visible width of a styled string (SGR sequences are zero-width). */
 export function visibleWidth(styled: string): number {
-  // Strip C1 SGR sequences, then count code points.
-  // Only sequences PineVIM emits are simple SGR params; a permissive strip is
-  // safe here because inputs are PineVIM-authored.
-  // eslint-disable-next-line no-control-regex
-  const bare = styled.replace(/\x1b\[[0-9;]*m/g, "");
+  // Strip SGR and tmux style tokens, then count code points.
+  const bare = styled
+    // eslint-disable-next-line no-control-regex
+    .replace(/\x1b\[[0-9;]*m/g, "")
+    .replace(/#\[[^\]]*\]/g, "");
   return [...bare].length;
 }

@@ -15,7 +15,7 @@
 import { basename } from "node:path";
 import { plain } from "../../diagnostics.js";
 import { fit } from "../../piui/glyphs.js";
-import { escapeTmuxFormat, sgr, visibleWidth, type SgrRole } from "./styled.js";
+import { tmuxFg, visibleWidth, type SgrRole } from "./styled.js";
 import type { State } from "../../core/state.js";
 
 /** Decoded bridge telemetry (parsed from the extension status payload). */
@@ -47,14 +47,22 @@ const MODE_LABEL: Record<State["mode"], string> = {
 
 function agentSegment(input: StatusInput): { text: string; role: SgrRole } {
   const s = input.state;
-  const g = input.ascii ? "*" : "●";
+  // The strip is ASCII so the status option survives terminals and sanitizers.
+  const g = "*";
+  void input.ascii;
   // Distinguish "never launched" from "launched then died": a null Child is
   // the pre-launch window, not a crash (state.ts models agent as Child | null).
   if (s.agent === null) return { text: `${g} agent starting`, role: "muted" };
   if (!s.agent.alive)
-    return { text: `${g} pi dead · r to retry`, role: "error" };
+    return {
+      text: `${g} pi dead · prefix r after confirmation`,
+      role: "error",
+    };
   if (!s.bridge)
-    return { text: `${g} bridge down · --resume`, role: "warning" };
+    return {
+      text: `${g} bridge down · prefix still works · --resume`,
+      role: "warning",
+    };
   const t = input.telemetry;
   const lifecycle = t?.lifecycle ?? (s.busy ? "run" : "idle");
   switch (lifecycle) {
@@ -91,10 +99,7 @@ function segments(input: StatusInput): { text: string; role: SgrRole }[] {
     { text: modeText, role: "accent" },
     agent,
   ];
-  const ctx = input.telemetry?.ctxPercent ?? null;
-  if (ctx !== null)
-    segs.push({ text: `ctx ${Math.round(ctx)}%`, role: "muted" });
-  // Recovery guidance outranks telemetry (§34): geometry warnings replace ctx.
+  // Context stays on the in-pane deck. The strip mirrors lifecycle only.
   if (s.geometry.columns < 60 || s.geometry.rows < 16) {
     return [
       { text: "resize to 60x16", role: "warning" },
@@ -110,8 +115,8 @@ function segments(input: StatusInput): { text: string; role: SgrRole }[] {
  * Budget: tmux status-left-length is 250 cells; keep <= 200 visible so the
  * prefix + hidden markup stay well inside the option cap.
  */
-export function statusLine(input: StatusInput): string {
-  const sep = input.ascii ? " | " : "  ·  ";
+export function statusLine(input: StatusInput, color = true): string {
+  const sep = " | ";
   const budget = 200;
   const segs = segments(input);
   const parts: string[] = [];
@@ -120,19 +125,24 @@ export function statusLine(input: StatusInput): string {
     const seg = segs[i]!;
     const withSep = i === 0 ? seg.text.length : seg.text.length + sep.length;
     if (used + withSep > budget && parts.length > 0) break;
-    parts.push(sgr(seg.role, seg.text));
+    // Dynamic text is already plain()'d. Double # before style tokens exist.
+    const text = seg.text.replace(/#/g, "##");
+    parts.push(tmuxFg(seg.role, text, color));
     used += withSep;
   }
   const rendered = parts.join(sep);
-  // Final guard: if even the first segment overflows (tiny budget), clip it.
   if (visibleWidth(rendered) > budget) {
     const first = segs[0]!;
-    return sgr(first.role, fit(first.text, budget));
+    return tmuxFg(
+      first.role,
+      fit(first.text, budget).replace(/#/g, "##"),
+      color,
+    );
   }
   return rendered;
 }
 
-/** Escaped, tmux-ready option value. */
-export function statusOptionValue(input: StatusInput): string {
-  return escapeTmuxFormat(statusLine(input));
+/** Tmux-ready status-left value. No ESC. Style hashes are single; data hashes are doubled. */
+export function statusOptionValue(input: StatusInput, color = true): string {
+  return statusLine(input, color);
 }

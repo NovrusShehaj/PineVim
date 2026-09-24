@@ -7,10 +7,11 @@
  * 3.5, so popups are always available, with a notify() fallback kept for
  * popup-failure resilience.
  */
-import { plain } from "../../diagnostics.js";
+import { plain, recoveryCopy } from "../../diagnostics.js";
 import { fit } from "../../piui/glyphs.js";
-import { escapeTmuxFormat, sgr } from "./styled.js";
+import { helperCommand } from "./config.js";
 import type { State } from "../../core/state.js";
+import type { AgentTelemetry } from "./statusline.js";
 
 export const PANEL_ACTIONS = ["help", "status", "menu"] as const;
 export type PanelAction = (typeof PANEL_ACTIONS)[number];
@@ -49,16 +50,21 @@ export function helpRows(prefix: string): HelpRow[] {
 
 const POPUP_WIDTH = 44;
 
-/** Render help popup lines (one row per binding, plus header/footer). */
+/** Render help popup lines (one row per binding, plus slash commands). */
 export function helpPanelLines(prefix: string): string[] {
-  const header = sgr("accent", " PineVIM keys ");
-  const rule = sgr("muted", "─".repeat(POPUP_WIDTH - 2));
+  const header = " pinevim keys ";
+  const rule = "-".repeat(POPUP_WIDTH - 2);
   const rows = helpRows(prefix).map((r) => {
-    const key = fit(r.key, 10).padEnd(10, " ");
-    return `${sgr("text", key)}${sgr("muted", r.action)}`;
+    const key = fit(r.key, 14).padEnd(14, " ");
+    return `${key}${r.action}`;
   });
-  const footer = sgr("muted", " Esc or q closes ");
-  return [header, rule, ...rows, rule, footer].map(escapeTmuxFormat);
+  const slash = [
+    "/ide            open the editor",
+    "/pinevim help   this list",
+    "/pinevim quit   safe quit",
+  ];
+  const footer = " press a key ";
+  return [header, rule, ...rows, rule, ...slash, rule, footer];
 }
 
 export interface StatusFacts {
@@ -70,19 +76,27 @@ export interface StatusFacts {
   versions: { pi: string; tmux: string; node: string };
   editorNote: string | null;
   prefix: string;
+  telemetry?: AgentTelemetry | null;
+  themes?: "copied" | "not copied";
+}
+
+function lifecycleFact(s: State, facts: StatusFacts): string {
+  const life = facts.telemetry?.lifecycle;
+  if (life === "waiting")
+    return facts.telemetry?.waitingKind
+      ? `needs you (${facts.telemetry.waitingKind})`
+      : "needs you";
+  if (life) return life;
+  return s.busy ? "running" : "idle";
 }
 
 /** Render status popup lines from controller-owned state. */
 export function statusPanelLines(s: State, facts: StatusFacts): string[] {
-  const header = sgr("accent", " PineVIM workspace ");
-  const rule = sgr("muted", "─".repeat(POPUP_WIDTH - 2));
-  const row = (
-    label: string,
-    value: string,
-    role: "text" | "muted" | "warning" | "error" | "success" = "text",
-  ): string => {
+  const header = " pinevim workspace ";
+  const rule = "-".repeat(POPUP_WIDTH - 2);
+  const row = (label: string, value: string): string => {
     const l = fit(plain(label, 12), 12).padEnd(12, " ");
-    return `${sgr("muted", l)}${sgr(role, fit(plain(value, 30), 30))}`;
+    return `${l}${fit(plain(value, 30), 30)}`;
   };
   const mode: Record<State["mode"], string> = {
     CHAT_ONLY: "CHAT",
@@ -102,14 +116,16 @@ export function statusPanelLines(s: State, facts: StatusFacts): string[] {
       s.agent === null
         ? "not started"
         : !s.agent.alive
-          ? `dead (exit ${s.agent.exitCode ?? s.agent.signal ?? "?"})`
+          ? `dead (exit ${s.agent.exitCode ?? s.agent.signal ?? "?"}). ${recoveryCopy("AGENT")}`
           : "alive",
-      s.agent === null ? "muted" : !s.agent.alive ? "error" : "success",
     ),
     row(
       "bridge",
-      s.bridge ? "connected" : s.agent?.alive ? "down (--resume)" : "n/a",
-      s.bridge ? "success" : s.agent?.alive ? "warning" : "muted",
+      s.bridge
+        ? "connected"
+        : s.agent?.alive
+          ? recoveryCopy("DISCONNECTED")
+          : "n/a",
     ),
     row(
       "editor",
@@ -119,30 +135,42 @@ export function statusPanelLines(s: State, facts: StatusFacts): string[] {
         : s.mode === "CHAT_ONLY"
           ? "running, hidden"
           : "alive",
-      s.editor?.alive ? "success" : "muted",
     ),
-    row("lifecycle", s.busy ? "running" : "idle", s.busy ? "text" : "success"),
-    row(
-      "session",
-      s.sessionId ? s.sessionId.slice(0, 12) : "none yet",
-      "muted",
-    ),
-    row(
-      "versions",
-      `pi ${facts.versions.pi}, tmux ${facts.versions.tmux}`,
-      "muted",
-    ),
-    row(
-      "slash",
-      facts.slash.pinevim ? "/pinevim ok" : "/pinevim collision",
-      facts.slash.pinevim ? "muted" : "warning",
-    ),
+    row("lifecycle", lifecycleFact(s, facts)),
+    row("session", s.sessionId ? s.sessionId.slice(0, 12) : "none yet"),
+    row("versions", `pi ${facts.versions.pi}, tmux ${facts.versions.tmux}`),
+    row("slash", facts.slash.pinevim ? "/pinevim ok" : "/pinevim collision"),
+    ...(facts.themes
+      ? [
+          row(
+            "themes",
+            facts.themes === "not copied"
+              ? `not copied. ${recoveryCopy("THEME")}`
+              : facts.themes,
+          ),
+        ]
+      : []),
   ];
-  const footer = sgr(
-    "muted",
-    ` ${prefixLabel(facts.prefix)} ? keys · s status `,
-  );
-  return [...lines, rule, footer].map(escapeTmuxFormat);
+  const footer = ` ${prefixLabel(facts.prefix)} ? keys `;
+  return [...lines, rule, footer];
+}
+
+/** display-menu argv: each item runs the helper with an existing intent. */
+export function menuDisplayArgv(
+  node: string,
+  helper: string,
+  runtime: string,
+  prefix: string,
+): string[] {
+  const argv = ["display-menu", "-T", "pinevim"];
+  for (const e of menuEntries(prefix).slice(0, 8)) {
+    argv.push(
+      e.label,
+      "",
+      `run-shell -b ${helperCommand(node, helper, runtime, e.intent)}`,
+    );
+  }
+  return argv;
 }
 
 /** Menu entries: label + the controller intent each triggers. */

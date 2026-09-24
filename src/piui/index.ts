@@ -31,7 +31,17 @@ import {
   type LifecycleState,
 } from "./lifecycle.js";
 import { telemetryLine as telemetryLineOf } from "./lifecycle.js";
-import { applyTheme, isPinevimThemeName } from "./theme.js";
+import { formatChangeSummary, worktreeNumstat } from "./changes.js";
+import {
+  initialRun,
+  runClose,
+  runPath,
+  runStart,
+  runToolName,
+  runTools,
+  toolWritePath,
+  type RunState,
+} from "./runs.js";
 import { titleBrand } from "./logo.js";
 import { headerFactory } from "./components/header.js";
 import { deckFactory, type DeckInfo } from "./components/deck.js";
@@ -42,8 +52,14 @@ import {
   type TurnSummaryData,
 } from "./renderers/turnSummary.js";
 import type { UiConfig } from "../config.js";
+import {
+  RUN_SUMMARY_TYPE,
+  runSummaryRenderer,
+  WELCOME_TYPE,
+  welcomeRenderer,
+  type RunSummaryData,
+} from "./renderers/runLedger.js";
 export * from "./renderers/cards.js";
-export * from "./components/composer.js";
 
 /** Hook probe result used by the compatibility gate. */
 export interface PiUiHooks {
@@ -88,10 +104,6 @@ export class PiUi {
   private band: ReturnType<typeof bandFactory> | null = null;
   private mode: "CHAT" | "IDE" =
     process.env.PINEVIM_IDE === "1" ? "IDE" : "CHAT";
-  private turnStart: { index: number | null; at: number } = {
-    index: null,
-    at: 0,
-  };
   private unsubs: (() => void)[] = [];
   private lastCtxPercent: number | null = null;
   private disposed = false;
@@ -99,6 +111,10 @@ export class PiUi {
   private tui: Parameters<typeof headerFactory>[0] | null = null;
   /** Abort listener for the current turn's signal, if any. */
   private abortSignal: AbortSignal | null = null;
+  private run: RunState = initialRun();
+  lastSummary: RunSummaryData | null = null;
+  /** Fired when lifecycle text changes. The extension coalesces bridge reports. */
+  onTelemetry: (() => void) | null = null;
 
   constructor(
     private pi: ExtensionAPI,
@@ -133,6 +149,20 @@ export class PiUi {
       TURN_SUMMARY_TYPE,
       turnSummaryRenderer(this.g) as never,
     );
+    this.pi.registerEntryRenderer<RunSummaryData>(
+      RUN_SUMMARY_TYPE,
+      runSummaryRenderer(this.g) as never,
+    );
+    this.pi.registerEntryRenderer<{ text: string }>(
+      WELCOME_TYPE,
+      welcomeRenderer() as never,
+    );
+    if (process.env.PINEVIM_WELCOME === "1") {
+      const prefix = process.env.PINEVIM_UI_PREFIX || "F12";
+      this.pi.appendEntry(WELCOME_TYPE, {
+        text: `type to work · ${prefix} ? keys · /pinevim help`,
+      });
+    }
 
     // Frame registration is deferred past Pi's startup sequence: verified via
     // a minimal-extension probe that setHeader/setFooter registered
@@ -200,14 +230,6 @@ export class PiUi {
       // getArgumentCompletions on registerCommand — see completions.ts —
       // because a provider wrapper corrupts bare-command input.)
 
-      // Non-persistent PineVIM theme (plan §12) once the frame is in place.
-      // The env value is controller-authored, but the extension reads env
-      // directly, so re-guard before trusting it as a theme name.
-      const themeName = this.ui.theme;
-      if (themeName && themeName !== "auto" && isPinevimThemeName(themeName)) {
-        applyTheme(ui, themeName);
-      }
-
       // Brand the terminal title (replaces Pi's "π - …" prefix). Best-effort:
       // non-TUI contexts and embedding hosts may not implement setTitle.
       try {
@@ -224,8 +246,8 @@ export class PiUi {
       ctxPercent: this.lastCtxPercent,
       model: this.ctx.model?.name ?? null,
       thinking: this.ctx.thinkingLevel ?? null,
-      degraded: null,
       prefix: process.env.PINEVIM_UI_PREFIX || "F12",
+      ascii: this.ui.glyphs === "ascii",
     };
   }
 
@@ -233,7 +255,8 @@ export class PiUi {
     return {
       mode: this.mode,
       lifecycle: this.state,
-      queued: this.ctx.hasPendingMessages() ? 1 : 0,
+      queued: this.ctx.hasPendingMessages(),
+      ascii: this.ui.glyphs === "ascii",
       ctxPercent: this.lastCtxPercent,
       model: this.ctx.model?.name ?? null,
       thinking: this.ctx.thinkingLevel ?? null,
@@ -252,6 +275,7 @@ export class PiUi {
     });
     this.deck?.update(this.deckInfo());
     this.band?.update(this.bandInfo());
+    this.onTelemetry?.();
   }
 
   private wireEvents(): void {
@@ -264,7 +288,6 @@ export class PiUi {
             ? (e as { turnIndex: number }).turnIndex
             : (this.state.turnIndex ?? 0) + 1,
         );
-        this.turnStart = { index: this.state.turnIndex, at: Date.now() };
         this.ctx = ctx;
         this.watchAbort(ctx);
         this.refresh();
@@ -278,8 +301,18 @@ export class PiUi {
       }),
     );
     this.unsubs.push(
+      pi.on("agent_start", () => {
+        this.run = runStart(this.run, Date.now());
+        this.refresh();
+      }),
+    );
+    this.unsubs.push(
       pi.on("tool_execution_start", (e, _ctx) => {
         this.state = lifecycle.toolStart(this.state, e);
+        const args = (e as { args?: unknown }).args;
+        const name = String(e.toolName ?? "");
+        this.run = runToolName(this.run, name);
+        this.run = runPath(this.run, toolWritePath(name, args));
         this.refresh();
       }),
     );
@@ -308,33 +341,32 @@ export class PiUi {
       }),
     );
     this.unsubs.push(
-      pi.on("session_compact", (_e, _ctx) => {
-        this.state = { ...this.state, lifecycle: "streaming" };
+      pi.on("session_compact", () => {
+        this.state = lifecycle.compactDone(this.state);
         this.refresh();
       }),
     );
     this.unsubs.push(
+      (pi.on as unknown as (event: string, handler: () => void) => () => void)(
+        "session_compact_failed",
+        () => {
+          this.state = lifecycle.compactDone(this.state);
+          this.refresh();
+        },
+      ),
+    );
+    this.unsubs.push(
       pi.on("turn_end", (e, ctx) => {
         this.state = lifecycle.turnEnd(this.state, e);
-        // Persisted anchor (plan §8.4): elapsed from turn_start, ctx at end.
-        // Pi signals interruption via stopReason "aborted" on the final message
-        // (agent-session.js maps it to outcome "aborted").
         const message = e.message as { stopReason?: string } | undefined;
         const interrupted =
           message?.stopReason === "aborted" || this.state.aborted;
-        const seconds =
-          this.turnStart.at > 0
-            ? Math.max(0, (Date.now() - this.turnStart.at) / 1000)
-            : null;
-        const data: TurnSummaryData = {
-          turn: e.turnIndex ?? null,
-          seconds,
-          tools: this.state.toolsRun,
-          failed: this.state.toolsFailed,
+        this.run = runTools(
+          this.run,
+          this.state.toolsRun,
+          this.state.toolsFailed,
           interrupted,
-          ctxPercent: contextPercent(ctx),
-        };
-        pi.appendEntry<TurnSummaryData>(TURN_SUMMARY_TYPE, data);
+        );
         this.ctx = ctx;
         this.refresh();
       }),
@@ -343,6 +375,27 @@ export class PiUi {
       pi.on("agent_settled", (_e, ctx) => {
         this.state = lifecycle.settled(this.state);
         this.ctx = ctx;
+        const closed = runClose(this.run, Date.now());
+        this.run = closed.state;
+        const summary = closed.summary;
+        if (summary) {
+          void worktreeNumstat(ctx.cwd).then((worktree) => {
+            const data: RunSummaryData = {
+              index: summary.index,
+              seconds: summary.seconds,
+              tools: summary.tools,
+              failed: summary.failed,
+              interrupted: summary.interrupted,
+              ctxPercent: contextPercent(ctx),
+              changes: formatChangeSummary(summary.toolPaths.length, worktree),
+              toolNames: summary.toolNames,
+              toolPaths: summary.toolPaths,
+            };
+            this.lastSummary = data;
+            pi.appendEntry<RunSummaryData>(RUN_SUMMARY_TYPE, data);
+            this.refresh();
+          });
+        }
         this.refresh();
       }),
     );

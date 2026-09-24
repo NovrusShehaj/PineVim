@@ -45,6 +45,19 @@ export function isPinevimThemeName(value: string): value is PinevimThemeName {
  * - anything else falls back to auto (config validation rejects other values,
  *   so this branch guards hand-edited files and future-proofness).
  */
+/**
+ * Theme to apply when config is `auto`.
+ * Null when the active theme is not Pi's built-in dark or light default.
+ */
+export function autoPinevimTheme(
+  currentName: string | undefined,
+): PinevimThemeName | null {
+  if (currentName === "light") return "pinevim-light";
+  if (currentName === undefined || currentName === "" || currentName === "dark")
+    return "pinevim-dark";
+  return null;
+}
+
 export function preferredThemeName(
   themeConfig: string | undefined,
   colorScheme: string | undefined,

@@ -30,7 +30,14 @@ import {
   ideArgumentCompletions,
   pinevimArgumentCompletions,
 } from "../../src/piui/completions.js";
-import { treeLines, titleBrand } from "../../src/piui/logo.js";
+import {
+  PINE_CROWN_LINES,
+  PINE_TREE,
+  PINE_TREE_WIDTH,
+  shadeFgAnsi,
+  treeLines,
+  titleBrand,
+} from "../../src/piui/logo.js";
 import { headerFactory } from "../../src/piui/components/header.js";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import {
@@ -55,15 +62,6 @@ import {
   ToolCardComponent,
   type ToolCardInfo,
 } from "../../src/piui/renderers/cards.js";
-import {
-  PineComposer,
-  type ComposerInfo,
-} from "../../src/piui/components/composer.js";
-import {
-  type EditorTheme,
-  type TUI,
-  KeybindingsManager,
-} from "@earendil-works/pi-tui";
 
 describe("glyphs", () => {
   it("every unicode glyph has an ascii fallback with the same key", () => {
@@ -237,8 +235,50 @@ describe("lifecycle", () => {
       reason: "ui_prompt",
       kind: "input",
     });
-    assert.equal(s.lifecycle, "tooling");
+    assert.equal(s.lifecycle, "idle");
     assert.equal(s.prompt, null);
+  });
+  it("prompt end restores tooling when the prompt interrupted tools", () => {
+    let s = lifecycle.toolStart(start(), {
+      type: "tool_execution_start",
+      toolCallId: "1",
+      toolName: "bash",
+      args: {},
+    });
+    s = lifecycle.waiting(s, {
+      type: "ui_prompt_start",
+      reason: "ui_prompt",
+      kind: "input",
+    });
+    s = lifecycle.promptEnd(s, {
+      type: "ui_prompt_end",
+      reason: "ui_prompt",
+      kind: "input",
+    });
+    assert.equal(s.lifecycle, "tooling");
+  });
+  it("text deltas stay streaming even if a thinking block exists", () => {
+    const s = lifecycle.messageUpdate(start(), {
+      type: "message_update",
+      message: {
+        role: "assistant",
+        content: [{ type: "thinking", thinking: "..." }],
+      },
+      assistantMessageEvent: { type: "text_delta" },
+    } as never);
+    assert.equal(s.lifecycle, "streaming");
+  });
+  it("compact done restores idle instead of forcing streaming", () => {
+    let s = lifecycle.compacting(start(), {
+      type: "session_before_compact",
+      preparation: {} as never,
+      branchEntries: [],
+      reason: "manual",
+      willRetry: false,
+      signal: new AbortController().signal,
+    });
+    s = lifecycle.compactDone(s);
+    assert.equal(s.lifecycle, "idle");
   });
   it("tool failures are counted", () => {
     let s = lifecycle.toolStart(start(), {
@@ -557,10 +597,32 @@ describe("slash completions", () => {
 });
 
 describe("logo", () => {
-  it("the mark is pure ASCII — one cell per glyph under every width model", () => {
+  it("shadeFgAnsi scales truecolor RGB and clamps", () => {
+    assert.equal(
+      shadeFgAnsi("\x1b[38;2;100;200;60m", 0.5),
+      "\x1b[38;2;50;100;30m",
+    );
+    // Rounding + clamp at both ends.
+    assert.equal(
+      shadeFgAnsi("\x1b[38;2;61;255;160m", 0.68),
+      "\x1b[38;2;41;173;109m",
+    );
+    assert.equal(
+      shadeFgAnsi("\x1b[38;2;10;20;30m", 50),
+      "\x1b[38;2;255;255;255m",
+    );
+    assert.equal(shadeFgAnsi("\x1b[38;2;10;20;30m", 0), "\x1b[38;2;0;0;0m");
+  });
+  it("shadeFgAnsi falls back to null for non-truecolor sequences", () => {
+    assert.equal(shadeFgAnsi("\x1b[38;5;196m", 0.5), null);
+    assert.equal(shadeFgAnsi("\x1b[31m", 0.5), null);
+    assert.equal(shadeFgAnsi("not-ansi", 0.5), null);
+    assert.equal(shadeFgAnsi("\x1b[38;2;1;2m", 0.5), null);
+  });
+  it("the full pine is pure ASCII — one cell per glyph under every width model", () => {
     // pi-tui measures emoji and some symbols at 2 cells while several
     // terminals render them at 1; ASCII keeps the header arithmetic exact.
-    for (const line of treeLines()) {
+    for (const line of PINE_TREE) {
       assert.match(
         line,
         /^[ -~]*$/,
@@ -568,7 +630,18 @@ describe("logo", () => {
       );
     }
   });
-  it("crown and base share the same cell width", () => {
+  it("the full pine fits its declared width and line count", () => {
+    assert.equal(PINE_TREE.length, 11);
+    for (const line of PINE_TREE) {
+      assert.ok(line.length <= PINE_TREE_WIDTH, `too wide: ${line}`);
+    }
+    assert.equal(
+      Math.max(...PINE_TREE.map((l) => l.length)),
+      PINE_TREE_WIDTH,
+      "PINE_TREE_WIDTH must equal the widest line",
+    );
+  });
+  it("compact mark: crown and base share the same cell width", () => {
     const [crown, base] = treeLines();
     assert.equal(crown.length, base.length);
     assert.ok(crown.includes("/"));
@@ -581,46 +654,119 @@ describe("logo", () => {
 
 describe("header", () => {
   const g = glyphs("unicode");
-  const make = (width: number) => {
+  const idle: LifecycleState = initialLifecycle();
+  const active: LifecycleState = { ...idle, lifecycle: "streaming" };
+  // Realistic accent styling: Theme.fg wraps text in the resolved SGR code
+  // (a pass-through stub would hide the canopy's ANSI from assertions).
+  const ACCENT = "\x1b[38;2;61;255;160m";
+  const makeWith = (width: number, lifecycle: LifecycleState) => {
     const tui = { requestRender: () => {} } as never;
     const theme = {
-      fg: (_role: string, s: string) => s,
+      fg: (role: string, s: string) =>
+        role === "accent" ? `${ACCENT}${s}\x1b[0m` : s,
       bold: (s: string) => s,
+      getFgAnsi: (_role: string) => ACCENT,
     } as never;
     const info = {
       workspace: "~/proj",
       sessionName: null,
       mode: "CHAT" as const,
-      lifecycle: initialLifecycle(),
+      lifecycle,
     };
     return headerFactory(tui, theme, g, info).render(width);
   };
 
-  it("renders the pine logo and wordmark in the wide band", () => {
-    const lines = make(100);
-    assert.ok(lines.length >= 2, "logo band + identity line expected");
-    const bare = lines.map(stripTerminalSequences).join("\n");
-    assert.match(bare, /pinevim/);
-    assert.match(bare, /\/\\/);
-    assert.match(bare, /\/\|\|\\/);
-    assert.match(bare, /CHAT/);
-  });
-
-  it("every header line fits the requested width in both bands", () => {
-    for (const width of [60, 79, 80, 100, 160]) {
-      const lines = make(width);
-      assert.ok(lines.length >= 1);
-      for (const line of lines) {
+  it("two-tone pine: canopy in accent, trunk in the darker same-hue shade", () => {
+    const lines = makeWith(120, idle);
+    assert.equal(lines.length, 11);
+    for (const [idx, line] of lines.entries()) {
+      if (idx < PINE_CROWN_LINES) {
         assert.ok(
-          [...stripTerminalSequences(line)].length <= width,
-          `line exceeds ${width}: ${line}`,
+          line.includes("\x1b[38;2;61;255;160m"),
+          `canopy line ${idx} not in accent`,
+        );
+      } else {
+        assert.ok(
+          line.includes("\x1b[38;2;41;173;109m"),
+          `trunk line ${idx} not in shaded accent`,
         );
       }
     }
   });
 
+  it("two-tone degrades to single-tone without truecolor", () => {
+    const tui = { requestRender: () => {} } as never;
+    const theme = {
+      fg: (_role: string, s: string) => s,
+      bold: (s: string) => s,
+      getFgAnsi: (_role: string) => "\x1b[38;5;196m",
+    } as never;
+    const info = {
+      workspace: "~/proj",
+      sessionName: null,
+      mode: "CHAT" as const,
+      lifecycle: idle,
+    };
+    const lines = headerFactory(tui, theme, g, info).render(120);
+    assert.equal(lines.length, 11);
+    for (const line of lines) {
+      assert.ok(
+        line.includes("\x1b[38;2;61;255;160m") === false,
+        "unexpected truecolor",
+      );
+      assert.ok(!line.includes("38;5;"), "shade must not leak 256-color codes");
+    }
+  });
+  const bare = (lines: string[]): string =>
+    lines.map(stripTerminalSequences).join("\n");
+
+  it("full pine is permanent at >= 100 columns (even after turns)", () => {
+    const splash = makeWith(120, idle);
+    assert.equal(splash.length, 11, "full pine line count");
+    assert.match(bare(splash), /\/\|\|\\/);
+    // After activity: still the full tree, with side info.
+    const after = makeWith(120, active);
+    assert.equal(after.length, 11);
+    assert.match(bare(after), /CHAT/);
+    assert.match(bare(after), /pinevim/);
+    assert.match(bare(after), /~\/proj/);
+  });
+
+  it("60-99 columns: splash pine greets, then collapses on first active turn", () => {
+    const splash = makeWith(90, idle);
+    assert.equal(splash.length, 11, "splash shows the greeting pine");
+    const collapsed = makeWith(90, active);
+    assert.ok(collapsed.length < 11, "collapsed after activity");
+    assert.match(bare(collapsed), /pinevim/);
+    assert.match(bare(collapsed), /CHAT/);
+  });
+
+  it("collapsed compact mark: two lines at 80-99, one line at 60-79", () => {
+    const wide = makeWith(85, active);
+    assert.equal(wide.length, 2);
+    assert.match(bare(wide), /\/\|\|\\/);
+    const narrow = makeWith(70, active);
+    assert.equal(narrow.length, 1);
+    assert.match(bare(narrow), /\//);
+  });
+
+  it("every header line fits the requested width in all bands and states", () => {
+    for (const width of [60, 79, 80, 99, 100, 120, 200]) {
+      for (const lc of [idle, active]) {
+        const lines = makeWith(width, lc);
+        assert.ok(lines.length >= 1, `no lines at ${width}`);
+        for (const line of lines) {
+          assert.ok(
+            [...stripTerminalSequences(line)].length <= width,
+            `line exceeds ${width}: ${stripTerminalSequences(line)}`,
+          );
+        }
+      }
+    }
+  });
+
   it("suppresses below 60 columns", () => {
-    assert.deepEqual(make(59), []);
+    assert.deepEqual(makeWith(59, idle), []);
   });
 });
 
@@ -764,100 +910,5 @@ describe("cards", () => {
     assert.match(expanded, /✓ read src\/main\.ts/);
     assert.match(expanded, /│\s+line 1/);
     assert.match(expanded, /│\s+line 2/);
-  });
-});
-
-describe("composer", () => {
-  class TestComposer extends PineComposer {
-    public testTopBorder(width: number, hiddenLines = 0): string {
-      return this.renderTopBorder(width, hiddenLines);
-    }
-    public testBottomBorder(width: number, hiddenLines = 0): string {
-      return this.renderBottomBorder(width, hiddenLines);
-    }
-  }
-
-  const makeComposer = (infoOverrides: Partial<ComposerInfo> = {}) => {
-    const tui: TUI = { requestRender: () => {} } as never;
-    const editorTheme: EditorTheme = {
-      borderColor: (s: string) => s,
-      selectList: {
-        selectedPrefix: (s: string) => s,
-        selectedText: (s: string) => s,
-        description: (s: string) => s,
-        scrollInfo: (s: string) => s,
-        noMatch: (s: string) => s,
-      },
-    };
-    const keybindings = new KeybindingsManager({} as never) as never;
-    const info: ComposerInfo = {
-      mode: "CHAT",
-      lifecycle: initialLifecycle(),
-      ctxPercent: 42,
-      model: "gpt-5",
-      thinking: "medium",
-      prefix: "F12",
-      ...infoOverrides,
-    };
-    return new TestComposer(tui, editorTheme, keybindings, UNICODE, info);
-  };
-
-  it("initializes with embedWorkingStatus: true", () => {
-    const composer = makeComposer();
-    assert.equal(composer.embedWorkingStatus, true);
-  });
-
-  it("renders top border with chips and shortcut hint at >=80 cols", () => {
-    const composer = makeComposer();
-    const top = composer.testTopBorder(100);
-    assert.match(top, /CHAT/);
-    assert.match(top, /idle/);
-    assert.match(top, /F12 \? keys/);
-  });
-
-  it("suppresses shortcut hint in top border at <80 cols", () => {
-    const composer = makeComposer();
-    const top = composer.testTopBorder(75);
-    assert.match(top, /CHAT/);
-    assert.match(top, /idle/);
-    assert.doesNotMatch(top, /F12 \? keys/);
-  });
-
-  it("renders top border scroll indicator when hidden lines exist above", () => {
-    const composer = makeComposer();
-    const top = composer.testTopBorder(100, 5);
-    assert.match(top, /↑ 5 more/);
-  });
-
-  it("renders bottom border with gauge, model, thinking, and send hint at >=80 cols", () => {
-    const composer = makeComposer();
-    const bottom = composer.testBottomBorder(100);
-    assert.match(bottom, /42%/);
-    assert.match(bottom, /gpt-5/);
-    assert.match(bottom, /think med/);
-    assert.match(bottom, /⏎ send/);
-  });
-
-  it("suppresses send hint and thinking chip in bottom border at <80 cols", () => {
-    const composer = makeComposer();
-    const bottom = composer.testBottomBorder(75);
-    assert.match(bottom, /42%/);
-    assert.match(bottom, /gpt-5/);
-    assert.doesNotMatch(bottom, /⏎ send/);
-  });
-
-  it("renders bottom border scroll indicator when hidden lines exist below", () => {
-    const composer = makeComposer();
-    const bottom = composer.testBottomBorder(100, 8);
-    assert.match(bottom, /↓ 8 more/);
-  });
-
-  it("updates state through update()", () => {
-    const composer = makeComposer();
-    composer.update({ mode: "IDE", model: "claude-3-7" });
-    const top = composer.testTopBorder(100);
-    const bottom = composer.testBottomBorder(100);
-    assert.match(top, /IDE/);
-    assert.match(bottom, /claude-3-7/);
   });
 });

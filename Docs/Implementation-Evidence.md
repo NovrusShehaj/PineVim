@@ -1,6 +1,8 @@
 # Implementation evidence and release decision
 
-Audit date: 2026-09-23. Contract: the complete 688-line `PineVim-Agent-Harness-Implementation-Plan.md`, sections 1–33 and appendices A/B. It was read before implementation and again during the completion audit. The historical planning document is unchanged.
+Audit date: 2026-09-23. Contract: `PineVim-Agent-Harness-Implementation-Plan.md`, sections 1–33 and appendices A/B. A 2026-09-24 amendment notes that the application exists and that the frame may call `setHeader` / `setFooter`. Neovim RPC stays deferred.
+
+The in-pane frame lives in `src/piui/`: header, chip band, footer deck, and one run-ledger line per request. Theme JSON is copied into Pi's user themes directory by `src/core/theme-install.ts` before spawn. That write is outside the private runtime directory. Header and footer stand-down can see a custom editor; it cannot see another extension's header. Tool cards are not registered. There is no custom composer. The 2026-09-24 product sequence closed the styled status writer, menu dispatch, Node popup viewer, bridge seen-window, lifecycle edges, and telemetry coalesce in unit tests. It did not rerun the integration inventory below. Release is not cleared: Linux, SSH, and physical-key rows remain open.
 
 **Local implementation is functional; release approval is withheld.** Physical terminal fidelity, Linux and SSH still need the environment-specific checks below. Automated PTY input is not physical keyboard, clipboard or visual rendering evidence. No percentage-complete or production-ready claim is made.
 

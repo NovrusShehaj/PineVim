@@ -15,6 +15,31 @@ export function safeError(error: unknown): string {
     ? error.message
     : "Operation failed; processes are preserved. Use --resume or inspect dependency availability.";
 }
+
+/** Fixed next-action copy. No paths, tokens, or environment values. */
+const NEXT_ACTION: Readonly<Record<string, string>> = {
+  LAYOUT: "Previous view kept. Resize or prefix Tab.",
+  DISCONNECTED: "Prefix still works. --resume if it persists.",
+  AGENT: "Prefix r after confirmation.",
+  EDITOR: "/ide starts a new editor. Unsaved buffers are not restored.",
+  UI: "Stock Pi. Prefix unaffected.",
+  THEME: "Session continues. /settings theme list may omit PineVim themes.",
+  NODE: "Node >=22.19.0 is required.",
+  COMPATIBILITY: "tmux >=3.5 is required.",
+};
+
+/** User-facing failure text. Known codes use the fixed sentence only. */
+export function userFacing(error: unknown): string {
+  if (error instanceof PineError) {
+    const next = NEXT_ACTION[error.code];
+    if (next) return next;
+  }
+  return safeError(error);
+}
+
+export function recoveryCopy(code: string): string {
+  return NEXT_ACTION[code] ?? safeError(new Error("unknown"));
+}
 /** Single-line, bounded literal for tmux format strings. */
 export function plain(value: string, limit = 160): string {
   return [...value]

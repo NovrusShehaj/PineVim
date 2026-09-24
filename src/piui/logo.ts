@@ -2,17 +2,47 @@
  * PineVIM brand assets: the pine-tree logo that replaces Pi's built-in "π"
  * wordmark in the header chrome and the terminal title.
  *
- * The mark is deliberately pure ASCII: "/\" crown over "/||\" trunk. Every
- * glyph occupies exactly one terminal cell under every width model (pi-tui's
- * get-east-asian-width included), so the header's alignment arithmetic is
- * exact, and no Unicode/ASCII glyph-mode divergence is needed — the ASCII
- * fallback for the mark is the mark itself. Color is applied by the header
- * through the theme's accent role, so the tree recolors with every theme.
+ * The full mark is the hand-drawn ASCII pine below (11 lines, 21 cells wide,
+ * pure ASCII). Every glyph occupies exactly one terminal cell under every
+ * width model (pi-tui's get-east-asian-width included), so the header's
+ * alignment arithmetic is exact, and no Unicode/ASCII glyph-mode divergence
+ * is needed. Color is applied by the header through the theme's accent role,
+ * so the tree recolors with every theme.
  */
+
+/** The full pine: 11 lines, widest line 21 cells (PINE_TREE_WIDTH). */
+export const PINE_TREE: readonly string[] = [
+  "            /\\",
+  "         /\\//\\/\\",
+  "        /\\ //\\\\ /\\",
+  "       /\\ //||\\\\ /\\",
+  "      /\\ ///||\\\\\\ /\\",
+  "     /--\\--/||\\--/--\\",
+  "     \\  ||/ || \\||  /",
+  "      \\ ||\\ || /|| /",
+  "       \\|| \\||/ ||/",
+  "        \\|  \\/  |/",
+  "         \\/\\/\\/\\/",
+];
+
+/** Visible width of the widest pine line; side info starts after this + gap. */
+export const PINE_TREE_WIDTH = 21;
+
+/**
+ * Rows 0..4 form the needle canopy; 5..10 the branch ledge and trunk.
+ * The header renders the canopy in the theme's accent color and the trunk
+ * in a darker shade of the same hue (two-tone treatment).
+ */
+export const PINE_CROWN_LINES = 5;
+
+/** Luminance factor for the trunk tone (0..1]; 1 disables the two-tone. */
+export const PINE_TRUNK_FACTOR = 0.68;
+
+/** Compact mark (crown, base), 4 cells wide — the collapsed header form. */
 export const TREE_CROWN = " /\\ ";
 export const TREE_BASE = "/||\\";
 
-/** The logo lines (crown, base), 4 cells wide each. */
+/** The compact logo lines (crown, base), 4 cells wide each. */
 export function treeLines(): readonly [string, string] {
   return [TREE_CROWN, TREE_BASE];
 }
@@ -20,4 +50,19 @@ export function treeLines(): readonly [string, string] {
 /** Terminal title prefix (pure ASCII — window chrome fonts vary). */
 export function titleBrand(): string {
   return "pinevim";
+}
+
+/**
+ * Scale an SGR truecolor foreground sequence's RGB by `factor` (0..1).
+ * Returns null for anything that is not a plain `38;2;r;g;b` sequence —
+ * 256-color and 8-color modes fall back to the single-tone render.
+ */
+export function shadeFgAnsi(ansi: string, factor: number): string | null {
+  // eslint-disable-next-line no-control-regex
+  const m = /^\x1b\[38;2;(\d{1,3});(\d{1,3});(\d{1,3})m$/.exec(ansi);
+  if (!m) return null;
+  const [r, g, b] = [m[1], m[2], m[3]].map((v) =>
+    Math.max(0, Math.min(255, Math.round(Number(v) * factor))),
+  );
+  return `\x1b[38;2;${r};${g};${b}m`;
 }

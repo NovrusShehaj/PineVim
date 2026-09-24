@@ -12,6 +12,7 @@ import {
   helpPanelLines,
   statusPanelLines,
   menuEntries,
+  menuDisplayArgv,
   isPanelAction,
 } from "../../src/adapters/tmux/panels.js";
 import { initialState } from "../../src/core/state.js";
@@ -90,9 +91,9 @@ describe("status line", () => {
       },
       ascii: true,
     });
-    const bare = stripTerminalSequences(line);
+    const bare = stripTerminalSequences(line).replace(/#\[[^\]]*\]/g, "");
     assert.match(bare, /agent tooling 3/);
-    assert.match(bare, /ctx 41%/);
+    assert.doesNotMatch(bare, /ctx 41%/);
   });
   it("reports waiting with prompt kind", () => {
     const line = statusLine({
@@ -129,7 +130,7 @@ describe("status line", () => {
     });
     const bare = stripTerminalSequences(line);
     assert.match(bare, /pi dead/);
-    assert.match(bare, /r to retry/);
+    assert.match(bare, /prefix r after confirmation/);
   });
   it("bridge down shows resume guidance", () => {
     const s = liveState();
@@ -161,7 +162,7 @@ describe("status line", () => {
     });
     const bare = stripTerminalSequences(line);
     assert.match(bare, /resize to 60x16/);
-    assert.doesNotMatch(bare, /ctx 30%/);
+    assert.doesNotMatch(bare, /tooling/);
   });
   it("respects the visible budget and drops tail segments first", () => {
     const line = statusLine({
@@ -189,8 +190,23 @@ describe("status line", () => {
       ascii: true,
     });
     // basename escaping happens via plain(); the value must not contain a lone #
-    assert.ok(!/(?<!#)%(?!#)/.test(value));
-    assert.ok(!value.includes("we#ird") || value.includes("we##ird"));
+    assert.ok(value.includes("we##ird"));
+    assert.equal(value.includes("\u001b"), false);
+    assert.match(value, /#\[fg=colour/);
+  });
+  it("no-color mode omits style tokens", () => {
+    const value = statusOptionValue(
+      {
+        state: liveState(),
+        workspace: "/tmp/ws",
+        prefix: "F12",
+        telemetry: null,
+        ascii: true,
+      },
+      false,
+    );
+    assert.equal(value.includes("#["), false);
+    assert.match(value, /\* agent/);
   });
 });
 
@@ -236,6 +252,38 @@ describe("panels", () => {
     assert.match(bare, /workspace/);
     assert.match(bare, /--resume/);
     assert.match(bare, /0\.87\.1/);
+  });
+  it("help lists slash commands", () => {
+    const bare = helpPanelLines("F12").join("\n");
+    assert.match(bare, /\/pinevim help/);
+    assert.match(bare, /\/ide/);
+  });
+  it("status popup uses telemetry waiting text", () => {
+    const s = liveState();
+    const bare = statusPanelLines(s, {
+      workspace: "/tmp/ws",
+      session: null,
+      bridge: true,
+      slash: { ide: true, pinevim: true },
+      versions: { pi: "0.87.1", tmux: "3.5", node: "22" },
+      editorNote: null,
+      prefix: "F12",
+      telemetry: {
+        lifecycle: "waiting",
+        toolsRun: 0,
+        toolsFailed: 0,
+        turnIndex: 1,
+        waitingKind: "confirm",
+        ctxPercent: null,
+      },
+    }).join("\n");
+    assert.match(bare, /needs you \(confirm\)/);
+  });
+  it("menu argv runs helper commands and does not send intent menu", () => {
+    const argv = menuDisplayArgv("/usr/bin/node", "/helper.js", "/rt", "F12");
+    assert.ok(argv.some((part) => part.includes("ide.open")));
+    assert.equal(argv.includes("menu"), false);
+    assert.equal(argv.join(" ").includes("read -n"), false);
   });
   it("menu entries map to controller intents", () => {
     const entries = menuEntries("F12");

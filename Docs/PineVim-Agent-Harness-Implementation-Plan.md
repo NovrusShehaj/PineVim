@@ -1,12 +1,12 @@
 # PineVim Agent Harness Implementation Plan
 
-Status: **Proposed architecture; planning/bootstrap complete; application not implemented.**
+Status: **Amended 2026-09-24.** The application exists. Section 14's rule against `setHeader` / `setFooter` is superseded by the in-pane PineVim frame. Neovim RPC remains deferred. The product sequence is `.cursor/pinevim-product-improvement-plan.md`. This document stays the original contract, not a claim that every later UI idea shipped.
 
 Discovery date: 2026-09-22. Target checkout: `~/Github/PineVim` (the filesystem also reports its parent as `~/github`). This document is the implementation contract, subject to the explicit feasibility gates below. Measurements and proposed targets are distinguished throughout.
 
 ## 1. Executive Summary
 
-PineVim is a planned terminal workspace that preserves the user's Pi chat and provider workflow and adds their normal Neovim environment on demand. Start with chat, enter `/ide` to open an editor beside the same conversation, hide the agent to use the editor at full width, and restore it without restarting either application.
+PineVim is a terminal workspace that preserves the user's Pi chat and provider workflow and adds their normal Neovim environment on demand. The application is implemented; this section remains the original architecture record. Start with chat, enter `/ide` to open an editor beside the same conversation, hide the agent to use the editor at full width, and restore it without restarting either application.
 
 **Recommend a TypeScript/Node.js controller over a private tmux server, running the installed Pi interactive CLI and normal Neovim in separate panes.** A bundled Pi extension, supplied using `--extension`, translates PineVim commands into a small local control protocol. Pi renders chat and owns models, authentication, tools and conversation persistence. tmux provides the terminal emulator, PTYs, pane layout and input routing. PineVim owns the state machine and lifecycle policy. Neovim RPC is deferred.
 

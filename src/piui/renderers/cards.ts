@@ -16,12 +16,15 @@
  * - 60–79 cols: truncated args, no counts
  * - < 60 cols: name + glyph only
  *
- * Pi 0.87.1 architecture boundary (documented per plan §14, §21):
- * In Pi 0.87.1, calling `pi.registerTool()` with a built-in tool name replaces
- * the entire tool definition in `AgentSession._toolRegistry`, including its
- * `execute()` implementation. Pi does not provide a presentation-only tool
- * renderer override hook (such as `registerToolRenderer`). Overriding built-ins
- * through `registerTool` would sever Pi's internal bash abort controllers,
+ * Parity spike (AGENT-003): not passed. `registerTool` on a built-in name is
+ * not called. These formatters stay unused by the live frame. The run ledger
+ * is the scan surface. A future spike may wrap Pi's built-in renderer only
+ * after an abort test proves bash cancellation still works.
+ *
+ * Pi 0.87.1 architecture boundary:
+ * Calling `pi.registerTool()` with a built-in tool name replaces the tool
+ * definition, including `execute()`. Overriding built-ins through
+ * `registerTool` would sever Pi's internal bash abort controllers,
  * trust management, file mutation queues, and session persistence. These
  * card primitives define the presentation contract and formatting engine
  * without compromising Pi's tool execution invariants.

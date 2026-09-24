@@ -29,7 +29,9 @@ ADR-001 is retained: interactive Pi inside private tmux. No custom compositor, R
 
 ## Color, clipboard and input policy
 
-Terminfo is probed before selecting tmux-256color; screen-256color is the fallback. PineVim does not advertise unsupported RGB features. Its status strip uses ASCII-safe text. Applications render their own Unicode and color. Images have no blanket passthrough guarantee.
+Terminfo is probed before selecting tmux-256color; screen-256color is the fallback. PineVim does not advertise unsupported RGB features. The status strip is ASCII text plus tmux `#[fg=colourN]` attributes, not raw SGR. A no-color writer omits style tokens. Applications render their own Unicode and color. Images have no blanket passthrough guarantee.
+
+Tool-card parity against Pi's built-in renderer was not proven. PineVim does not call `registerTool` for built-in tools. The run ledger is the scan surface. Linux, SSH, and physical-key gates below remain open.
 
 Mouse support is enabled. `allow-passthrough off` and `set-clipboard external` are explicit baseline choices; clipboard compatibility must be checked on each actual emulator and SSH path. The outer tmux must forward the chosen prefix and extended keys. Synthetic input tests certify byte routing, not OS function-key interception or physical key mapping.
 

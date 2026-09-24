@@ -3,9 +3,8 @@
  * Registered through ctx.ui.setFooter; the factory receives a
  * ReadonlyFooterDataProvider for git branch data not otherwise exposed.
  *
- * Two lines at >= 24 rows, one line below; progressive collapse at narrow
- * widths (plan §15). Render output is styled text; Pi's diff renderer redraws
- * only changed lines.
+ * One environment line at width >= 60. Below that, lifecycle and the gauge
+ * share a single line. Collapse is by width, not rows.
  */
 import { Container, type TUI } from "@earendil-works/pi-tui";
 import type {
@@ -16,10 +15,10 @@ import { fit } from "../glyphs.js";
 import { type GlyphSet } from "../glyphs.js";
 import { type LifecycleState } from "../lifecycle.js";
 import {
-  chipLine,
   contextGauge,
   lifecycleChip,
   modelChip,
+  styledChipLine,
   thinkingChip,
 } from "../chips.js";
 
@@ -46,9 +45,9 @@ export interface DeckInfo {
   ctxPercent: number | null;
   model: string | null;
   thinking: string | null;
-  degraded: string | null;
   /** Configured prefix, for the help hint. */
   prefix: string;
+  ascii: boolean;
 }
 
 export class PineDeck extends Container {
@@ -71,18 +70,9 @@ export class PineDeck extends Container {
     this.tui.requestRender();
   }
 
-  private line1(width: number): string {
-    const i = this.info;
-    const chip = lifecycleChip(i.lifecycle, this.g, Math.max(16, width - 24));
-    const degraded = i.degraded
-      ? { text: fit(i.degraded, 24), role: "warning" as const }
-      : null;
-    return chipLine([chip, degraded], width, "  ·  ");
-  }
-
   private line2(width: number): string {
     const i = this.info;
-    const gauge = contextGauge(i.ctxPercent, width >= 100 ? 10 : 6);
+    const gauge = contextGauge(i.ctxPercent, width >= 100 ? 10 : 6, i.ascii);
     const model = modelChip(i.model);
     const think = thinkingChip(i.thinking);
     const branch =
@@ -93,7 +83,14 @@ export class PineDeck extends Container {
       width >= 80
         ? { text: `${i.prefix} ? keys`, role: "muted" as const }
         : null;
-    return chipLine([gauge, model, think, branch, hint], width);
+    return styledChipLine(
+      [gauge, model, think, branch, hint],
+      width,
+      (role, text) => {
+        const fn = ROLE[role] ?? ROLE.muted;
+        return fn(this.theme, text);
+      },
+    );
   }
 
   override render(width: number): string[] {
@@ -113,21 +110,24 @@ export class PineDeck extends Container {
         }
       });
     }
-    const two = width >= 60;
-    if (!two) {
-      const merged = chipLine(
-        [
-          lifecycleChip(this.info.lifecycle, this.g, Math.max(12, width - 20)),
-          contextGauge(this.info.ctxPercent, 6),
-        ],
-        width,
-      );
-      return [style("muted", merged)];
+    // Width, not rows: a short wide terminal still has a footer.
+    if (width < 60) {
+      return [
+        styledChipLine(
+          [
+            lifecycleChip(
+              this.info.lifecycle,
+              this.g,
+              Math.max(12, width - 20),
+            ),
+            contextGauge(this.info.ctxPercent, 6, this.info.ascii),
+          ],
+          width,
+          style,
+        ),
+      ];
     }
-    return [
-      style("muted", this.line1(width)),
-      style("muted", this.line2(width)),
-    ];
+    return [this.line2(width)];
   }
 }
 

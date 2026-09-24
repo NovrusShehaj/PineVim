@@ -16,13 +16,11 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { type GlyphSet } from "../glyphs.js";
 import { type LifecycleState } from "../lifecycle.js";
 import {
-  chipLine,
   contextGauge,
   lifecycleChip,
   modeChip,
   queueChip,
-  thinkingChip,
-  modelChip,
+  styledChipLine,
 } from "../chips.js";
 
 type RoleStyle = (t: Theme, s: string) => string;
@@ -46,7 +44,8 @@ const ROLE: {
 export interface BandInfo {
   mode: "CHAT" | "IDE";
   lifecycle: LifecycleState;
-  queued: number;
+  queued: number | boolean;
+  ascii: boolean;
   ctxPercent: number | null;
   model: string | null;
   thinking: string | null;
@@ -72,29 +71,21 @@ export class PineBand extends Container {
   }
 
   override render(width: number): string[] {
-    if (width < 40) return []; // stock editor alone below 40 cols
+    // Below 60 the deck owns the single status line.
+    if (width < 60) return [];
     const t = this.theme;
     const i = this.info;
     const style = (role: string, s: string): string => {
       const fn = ROLE[role] ?? ROLE.muted;
       return fn(t, s);
     };
-    const chips =
-      width >= 80
-        ? [
-            modeChip(i.mode),
-            lifecycleChip(i.lifecycle, this.g, Math.max(14, width - 48)),
-            queueChip(i.queued, this.g),
-            contextGauge(i.ctxPercent, 8),
-            modelChip(i.model),
-            thinkingChip(i.thinking),
-          ]
-        : [
-            modeChip(i.mode),
-            lifecycleChip(i.lifecycle, this.g, Math.max(10, width - 12)),
-            contextGauge(i.ctxPercent, 6),
-          ];
-    return [style("muted", chipLine(chips, width))];
+    const chips = [
+      modeChip(i.mode),
+      lifecycleChip(i.lifecycle, this.g, Math.max(14, width - 24)),
+      queueChip(i.queued, this.g),
+      width < 80 ? contextGauge(i.ctxPercent, 6, i.ascii) : null,
+    ];
+    return [styledChipLine(chips, width, style)];
   }
 }
 

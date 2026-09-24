@@ -62,6 +62,8 @@ export interface LifecycleState {
   turnError: boolean;
   /** True when the active turn was aborted by the user. */
   aborted: boolean;
+  /** Lifecycle to restore after waiting or compacting. */
+  resume: Lifecycle | null;
 }
 
 export function initialLifecycle(): LifecycleState {
@@ -74,6 +76,7 @@ export function initialLifecycle(): LifecycleState {
     prompt: null,
     turnError: false,
     aborted: false,
+    resume: null,
   };
 }
 
@@ -92,16 +95,28 @@ export const lifecycle = {
       turnIndex,
       turnError: false,
       aborted: false,
+      resume: null,
     };
   },
   messageUpdate(s: LifecycleState, event: MessageUpdateEvent): LifecycleState {
     if (s.lifecycle === "waiting" || s.lifecycle === "compacting") return s;
     const message = event.message as { role?: string; stopReason?: string };
     if (message.role !== "assistant") return s;
+    const ev = event.assistantMessageEvent as { type?: string } | undefined;
+    const evType = ev?.type ?? "";
+    if (evType.startsWith("text")) return { ...s, lifecycle: "streaming" };
+    if (evType.startsWith("thinking")) return { ...s, lifecycle: "thinking" };
     const content = (message as { content?: unknown }).content;
+    const blocks = Array.isArray(content) ? content : [];
+    const hasText = blocks.some(
+      (block) =>
+        typeof block === "object" &&
+        block !== null &&
+        (block as { type?: string }).type === "text",
+    );
     const thinking =
-      Array.isArray(content) &&
-      content.some(
+      !hasText &&
+      blocks.some(
         (block) =>
           typeof block === "object" &&
           block !== null &&
@@ -134,17 +149,37 @@ export const lifecycle = {
     return {
       ...s,
       lifecycle: "waiting",
+      resume: s.lifecycle === "waiting" ? s.resume : s.lifecycle,
       prompt: { kind: typeof event.kind === "string" ? event.kind : "custom" },
     };
   },
   promptEnd(s: LifecycleState, _event: UIPromptEndEvent): LifecycleState {
-    return { ...s, lifecycle: "tooling", prompt: null };
+    const resume = s.resume;
+    const next: Lifecycle =
+      resume && resume !== "waiting" && resume !== "compacting"
+        ? resume
+        : "idle";
+    return { ...s, lifecycle: next, prompt: null, resume: null };
   },
   compacting(
     s: LifecycleState,
     _event: SessionBeforeCompactEvent,
   ): LifecycleState {
-    return { ...s, lifecycle: "compacting", prompt: null };
+    return {
+      ...s,
+      lifecycle: "compacting",
+      resume: s.lifecycle === "compacting" ? s.resume : s.lifecycle,
+      prompt: null,
+    };
+  },
+  compactDone(s: LifecycleState): LifecycleState {
+    if (s.lifecycle !== "compacting") return s;
+    const resume = s.resume;
+    const next: Lifecycle =
+      resume && resume !== "compacting" && resume !== "waiting"
+        ? resume
+        : "idle";
+    return { ...s, lifecycle: next, resume: null };
   },
   turnEnd(s: LifecycleState, event: TurnEndEvent): LifecycleState {
     const message = event.message as { stopReason?: string };

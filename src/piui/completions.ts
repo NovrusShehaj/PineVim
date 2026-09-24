@@ -44,6 +44,17 @@ export const PINEVIM_COMPLETIONS: Record<string, AutocompleteItem[]> = {
     { value: "status", label: "status", description: "Show workspace status" },
     { value: "help", label: "help", description: "Show PineVim keys" },
     { value: "quit", label: "quit", description: "Safe quit" },
+    {
+      value: "review",
+      label: "review",
+      description: "Show files from the last run",
+    },
+    {
+      value: "learn",
+      label: "learn",
+      description: "Propose a skill from the last run",
+    },
+    { value: "skills", label: "skills", description: "List learned skills" },
   ],
 };
 

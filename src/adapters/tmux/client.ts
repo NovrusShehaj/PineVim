@@ -1,10 +1,11 @@
 import { createConnection } from "node:net";
 import { spawn, type ChildProcess } from "node:child_process";
 import { join } from "node:path";
-import { writeFile } from "node:fs/promises";
+import { writeFile, mkdir } from "node:fs/promises";
 import { run, serverEnvironment } from "../../process.js";
 import { literal, PineError } from "../../diagnostics.js";
 import { helperCommand, tmuxQuote, tmuxConfig, terminfo } from "./config.js";
+import { menuDisplayArgv } from "./panels.js";
 import { agentWidth } from "../../core/layout.js";
 import type { State, Child } from "../../core/state.js";
 export interface Pane extends Child {
@@ -160,7 +161,6 @@ export class Tmux {
       q: "quit",
       r: "retry",
       s: "status",
-      m: "menu",
       "?": "help",
     }))
       await this.command(
@@ -173,6 +173,13 @@ export class Tmux {
         helperCommand(node, helper, this.runtime, intent),
       );
     await this.command("bind-key", "-T", "prefix", prefix, "send-prefix");
+    await this.command(
+      "bind-key",
+      "-T",
+      "prefix",
+      "m",
+      ...menuDisplayArgv(node, helper, this.runtime, prefix),
+    );
     for (const [hook, event] of Object.entries({
       "client-resized": "resize",
       "window-layout-changed": "layout",
@@ -286,12 +293,14 @@ export class Tmux {
     return actual;
   }
   async status(message: string): Promise<void> {
-    await this.command(
-      "set-option",
-      "-g",
-      "status-left",
-      literal(message, 500),
-    );
+    if (
+      [...message].some((ch) => {
+        const code = ch.codePointAt(0) ?? 0;
+        return code < 32 || code === 127;
+      })
+    )
+      throw new PineError("STATUS", "Status format rejected.");
+    await this.command("set-option", "-g", "status-left", message);
   }
   async notify(
     message: string,
@@ -320,11 +329,19 @@ export class Tmux {
    * interpolation of user data occurs (payload has no single quotes after
    * escaping, since content is PineVIM-authored with plain() applied).
    */
-  async popup(lines: string[], maxWidth: number): Promise<void> {
+  async popup(
+    lines: string[],
+    maxWidth: number,
+    node: string,
+    helperPath: string,
+  ): Promise<void> {
     const width = Math.min(maxWidth, 80);
-    const height = Math.min(lines.length + 2, 20);
-    const payload = lines.join("\n").slice(0, 900);
-    const shellPayload = payload.replace(/\n/g, "\\n").replace(/'/g, "'\\''");
+    const bodyLines = lines.slice(0, 24);
+    if (lines.length > 24) bodyLines.push("truncated");
+    const file = join(this.runtime, "popup.txt");
+    await mkdir(this.runtime, { recursive: true });
+    await writeFile(file, bodyLines.join("\n"), { mode: 0o600 });
+    const height = Math.min(bodyLines.length + 3, 20);
     await this.command(
       "display-popup",
       "-E",
@@ -336,17 +353,8 @@ export class Tmux {
       "50%",
       "-y",
       "40%",
-      `printf '%b' '${shellPayload}'; read -n 1`,
+      helperCommand(node, helperPath, this.runtime, "popup"),
     );
-  }
-
-  /** Context menu; values are controller intents (fixed vocabulary). */
-  async menu(entries: { name: string; value: string }[]): Promise<void> {
-    const argv: string[] = ["display-menu", "-T", "pinevim"];
-    for (const e of entries.slice(0, 8)) {
-      argv.push("-t", "", e.name, e.value);
-    }
-    await this.command(...argv);
   }
   async confirm(
     message: string,

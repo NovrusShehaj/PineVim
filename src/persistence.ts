@@ -270,6 +270,23 @@ export class Store {
   get metadataPath(): string {
     return join(this.directory, "state.json");
   }
+  /** First TUI session for this workspace. Later calls return false. */
+  async claimWelcome(): Promise<boolean> {
+    const file = join(this.directory, "welcomed");
+    try {
+      const fd = await open(
+        file,
+        constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
+        0o600,
+      );
+      await fd.writeFile("1");
+      await fd.close();
+      return true;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "EEXIST") return false;
+      return false;
+    }
+  }
   async acquire(): Promise<void> {
     await privateDirectory(dirname(this.directory));
     await privateDirectory(this.directory);

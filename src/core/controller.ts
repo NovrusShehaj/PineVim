@@ -9,12 +9,7 @@ import {
   statusOptionValue,
   type AgentTelemetry,
 } from "../adapters/tmux/statusline.js";
-import {
-  helpPanelLines,
-  statusPanelLines,
-  menuEntries,
-  isPanelAction,
-} from "../adapters/tmux/panels.js";
+import { helpPanelLines, statusPanelLines } from "../adapters/tmux/panels.js";
 import { parseTelemetryLine } from "../piui/lifecycle.js";
 import { installThemesToPi } from "./theme-install.js";
 import { piCommand } from "../adapters/pi/adapter.js";
@@ -28,7 +23,13 @@ import {
 import { Store, type Metadata } from "../persistence.js";
 import { type Config } from "../config.js";
 import { editorCommand } from "../editor.js";
-import { Logger, PineError, safeError, plain } from "../diagnostics.js";
+import {
+  Logger,
+  PineError,
+  userFacing,
+  recoveryCopy,
+  plain,
+} from "../diagnostics.js";
 import { agentWidth, tooSmall } from "./layout.js";
 import {
   initialState,
@@ -74,6 +75,8 @@ export class AppController {
   private slash = { ide: false, pinevim: false };
   /** Decoded bridge telemetry; null when the bridge is down. */
   private telemetry: AgentTelemetry | null = null;
+  private themesCopied = false;
+  private welcome = false;
   onStop: (message: string) => void = () => {};
   constructor(
     readonly config: Config,
@@ -126,7 +129,10 @@ export class AppController {
       // pane spawns: Pi resolves a persisted theme name at startup, before
       // extension discovery runs, so an extension-only registration would
       // fail with "Theme not found" on the launch after a /settings pick.
-      await installThemesToPi();
+      this.themesCopied = (await installThemesToPi()) !== null;
+      if (!this.themesCopied)
+        await this.logger.write({ event: "failure", code: "THEME" });
+      this.welcome = !resume && (await this.store.claimWelcome());
       if (!resume) {
         await this.tmux.configure(this.config.prefix);
         // Publish runtime identity before a child can exist. If the controller dies
@@ -160,6 +166,10 @@ export class AppController {
         this.state.lifecycle = "running";
         this.state.bridge = false;
         this.state.pending = null;
+        await this.tmux.notify(
+          "Resumed workspace. Unfinished tool calls were not replayed.",
+          "info",
+        );
       }
       await this.tmux.bindings(process.execPath, helper, this.config.prefix);
       await this.apply(this.state);
@@ -319,8 +329,8 @@ export class AppController {
       await this.reconcile(intent === "reconcile");
       if (this.stopped) return {};
       if (intent === "status" || intent === "help") {
-        // Panels replace the legacy one-line help/status toasts (plan §24-25);
-        // the intent still returns the legacy message so slash replies keep
+        // Panels replace the legacy one-line help/status toasts.
+        // The intent still returns the legacy message so slash replies keep
         // carrying collision/recovery text that tests and users rely on.
         await this.showPanel(intent === "help" ? "help" : "status");
         return {
@@ -329,13 +339,6 @@ export class AppController {
               ? "PineVim keys shown in a popup."
               : this.status(),
         };
-      }
-      if (
-        isPanelAction(intent) &&
-        (intent === "menu" || intent === "status" || intent === "help")
-      ) {
-        if (intent === "menu") await this.showMenu();
-        return {};
       }
       if (intent === "quit") {
         await this.quit(false);
@@ -404,6 +407,7 @@ export class AppController {
       this.state.pending = null;
       await this.persist();
       await this.renderStatus();
+      await this.pushView();
       await this.logger.write({
         event: "intent",
         operation: op,
@@ -416,7 +420,7 @@ export class AppController {
       await this.reconcile(false).catch(() => {});
       await this.apply(this.state).catch(() => {});
       await this.persist().catch(() => {});
-      await this.tmux.notify(safeError(e), "error").catch(() => {});
+      await this.tmux.notify(userFacing(e), "error").catch(() => {});
       await this.logger
         .write({
           event: "failure",
@@ -441,10 +445,7 @@ export class AppController {
       !this.state.editor.alive &&
       (this.state.editor.signal || this.state.editor.exitCode)
     )
-      await this.tmux.notify(
-        `Editor exited (${this.state.editor.signal ?? this.state.editor.exitCode}). Pi is preserved; /ide starts a new editor.`,
-        "warning",
-      );
+      await this.tmux.notify(recoveryCopy("EDITOR"), "warning");
     const geometry = await this.tmux.dimensions();
     const resized =
       geometry &&
@@ -581,6 +582,7 @@ export class AppController {
       PINEVIM_UI_MOTION: this.config.ui.motion,
       PINEVIM_UI_GLYPHS: this.config.ui.glyphs,
       PINEVIM_UI_THEME: this.config.ui.theme,
+      ...(this.welcome ? { PINEVIM_WELCOME: "1" } : {}),
       // Spawn-time view snapshot for the in-pane header (resumed workspaces
       // start in their persisted mode); live updates arrive via intents.
       PINEVIM_IDE: this.state.mode === "CHAT_ONLY" ? "0" : "1",
@@ -588,18 +590,20 @@ export class AppController {
     return env;
   }
 
-  /** Prefix-driven context menu: same intents, discoverable surface. */
-  private async showMenu(): Promise<void> {
-    const entries = menuEntries(this.config.prefix);
+  /** Tell the Pi frame which view is showing. The header must not guess. */
+  private async pushView(): Promise<void> {
+    const bridge = this.bridge;
+    if (!bridge || bridge.closed) return;
+    const mode = this.state.mode === "CHAT_ONLY" ? "CHAT" : "IDE";
     try {
-      await this.tmux.menu(
-        entries.map((e) => ({ name: e.label, value: e.intent })),
+      await bridge.request(
+        "view",
+        { mode, focus: this.state.focus },
+        this.state.generation,
+        this.state.epoch,
       );
     } catch {
-      await this.tmux.notify(
-        `Menu unavailable. ${this.config.prefix} ? lists keys; /pinevim help also works.`,
-        "warning",
-      );
+      /* the next status report still carries layout through the strip */
     }
   }
 
@@ -607,7 +611,12 @@ export class AppController {
   private async showPanel(kind: "help" | "status"): Promise<void> {
     try {
       if (kind === "help") {
-        await this.tmux.popup(helpPanelLines(this.config.prefix), 70);
+        await this.tmux.popup(
+          helpPanelLines(this.config.prefix),
+          70,
+          process.execPath,
+          helper,
+        );
       } else {
         const facts = {
           workspace: this.metadata.display,
@@ -615,10 +624,21 @@ export class AppController {
           bridge: this.state.bridge,
           slash: this.slash,
           versions: this.metadata.versions,
-          editorNote: null as string | null,
+          editorNote:
+            this.state.editor && !this.state.editor.alive
+              ? recoveryCopy("EDITOR")
+              : null,
           prefix: this.config.prefix,
+          telemetry: this.state.bridge ? this.telemetry : null,
+          themes: (this.themesCopied ? "copied" : "not copied") as
+            "copied" | "not copied",
         };
-        await this.tmux.popup(statusPanelLines(this.state, facts), 70);
+        await this.tmux.popup(
+          statusPanelLines(this.state, facts),
+          70,
+          process.execPath,
+          helper,
+        );
       }
     } catch {
       // Popup unavailable (older tmux, no client): keep the legacy toast path.
@@ -708,7 +728,7 @@ export class AppController {
         }, 10000);
       })
         .catch((e) => {
-          void this.tmux.notify(safeError(e), "error").catch(() => {});
+          void this.tmux.notify(userFacing(e), "error").catch(() => {});
         })
         .finally(() => {
           this.quitPending = false;

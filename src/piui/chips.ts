@@ -42,17 +42,26 @@ export function lifecycleChip(
   }
 }
 
-export function queueChip(queued: number, g: GlyphSet): Chip | null {
-  if (queued <= 0) return null;
-  return { text: `${g.queued} ${queued} queued`, role: "muted" };
+/** Boolean means "some messages are queued" without a real count. */
+export function queueChip(queued: number | boolean, g: GlyphSet): Chip | null {
+  if (queued === true) return { text: `${g.queued} queued`, role: "muted" };
+  if (typeof queued === "number" && queued > 0)
+    return { text: `${g.queued} ${queued} queued`, role: "muted" };
+  return null;
 }
 
-/** 10-cell context gauge: `▮▮▮▮▮▯▯▯▯▯ 42%`; hidden entirely when unknown. */
-export function contextGauge(percent: number | null, width = 10): Chip | null {
+/** 10-cell context gauge. ASCII mode uses `#` and `-` so glyphs stay one cell. */
+export function contextGauge(
+  percent: number | null,
+  width = 10,
+  ascii = false,
+): Chip | null {
   if (percent === null) return null;
   const clamped = Math.max(0, Math.min(100, Math.round(percent)));
   const filled = Math.round((clamped / 100) * width);
-  const bar = "▮".repeat(filled) + "▯".repeat(Math.max(0, width - filled));
+  const on = ascii ? "#" : "▮";
+  const off = ascii ? "-" : "▯";
+  const bar = on.repeat(filled) + off.repeat(Math.max(0, width - filled));
   return {
     text: `${bar} ${clamped}%`,
     role: clamped >= 90 ? "error" : clamped >= 75 ? "warning" : "muted",
@@ -96,4 +105,22 @@ export function chipLine(
   }
   const joined = line.join(sep);
   return joined.length > width ? fit(joined, width) : joined;
+}
+
+/** Same fit rules as chipLine, with each surviving chip styled by its role. */
+export function styledChipLine(
+  chips: (Chip | null)[],
+  width: number,
+  style: (role: Chip["role"], text: string) => string,
+  sep = "  ·  ",
+): string {
+  const present = chips.filter((c): c is Chip => c !== null);
+  const budget = (line: Chip[]): number =>
+    line.reduce((n, c) => n + [...c.text].length, 0) +
+    sep.length * (line.length - 1);
+  let line = present;
+  while (line.length > 1 && budget(line) > width) line = line.slice(0, -1);
+  if (line.length === 1 && line[0] && [...line[0].text].length > width)
+    return style(line[0].role, fit(line[0].text, width));
+  return line.map((c) => style(c.role, c.text)).join(sep);
 }
