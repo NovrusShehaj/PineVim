@@ -225,6 +225,9 @@ export function lifecycleLabel(
     compacting: string;
   },
 ): string {
+  const separator =
+    "rule" in g && typeof g.rule === "string" && g.rule === "-" ? "-" : "·";
+  const ellipsis = separator === "-" ? "..." : "…";
   switch (s.lifecycle) {
     case "idle":
       return `${g.running} idle`;
@@ -233,7 +236,7 @@ export function lifecycleLabel(
     case "streaming":
       return `${g.running} streaming`;
     case "tooling":
-      return `${g.running} tools ${s.toolsRun}${s.lastTool ? ` · ${fit(s.lastTool, 16)}` : ""}`;
+      return `${g.running} tools ${s.toolsRun}${s.lastTool ? ` ${separator} ${fit(s.lastTool, 16, ellipsis)}` : ""}`;
     case "waiting":
       return `${g.waiting} needs you${s.prompt ? ` (${s.prompt.kind})` : ""}`;
     case "compacting":

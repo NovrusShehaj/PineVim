@@ -1,51 +1,34 @@
 /**
- * PineVIM status deck (plan §16): the in-pane observability footer.
- * Registered through ctx.ui.setFooter; the factory receives a
- * ReadonlyFooterDataProvider for git branch data not otherwise exposed.
+ * PineVIM environment deck.
  *
- * One environment line at width >= 60. Below that, lifecycle and the gauge
- * share a single line. Collapse is by width, not rows.
+ * The deck is intentionally separate from the activity band: the band answers
+ * "what is happening now?", while this row answers "what environment am I in?".
+ * Keeping the distinction visible makes the frame easier to scan and prevents
+ * lifecycle, model, and context from competing for the same row.
  */
 import { Container, type TUI } from "@earendil-works/pi-tui";
 import type {
   ReadonlyFooterDataProvider,
   Theme,
 } from "@earendil-works/pi-coding-agent";
-import { fit } from "../glyphs.js";
 import { type GlyphSet } from "../glyphs.js";
+import { style, strong, surface } from "../style.js";
 import { type LifecycleState } from "../lifecycle.js";
 import {
+  branchChip,
   contextGauge,
-  lifecycleChip,
   modelChip,
   styledChipLine,
   thinkingChip,
+  type Chip,
 } from "../chips.js";
 
-type RoleStyle = (t: Theme, s: string) => string;
-const ROLE: {
-  [k: string]: RoleStyle | undefined;
-  accent: RoleStyle;
-  muted: RoleStyle;
-  success: RoleStyle;
-  warning: RoleStyle;
-  error: RoleStyle;
-  text: RoleStyle;
-} = {
-  accent: (t, s) => t.fg("accent", s),
-  muted: (t, s) => t.fg("muted", s),
-  success: (t, s) => t.fg("success", s),
-  warning: (t, s) => t.fg("warning", s),
-  error: (t, s) => t.fg("error", s),
-  text: (t, s) => t.fg("text", s),
-};
-
 export interface DeckInfo {
+  /** Kept in the data shape for status/focus updates; the deck does not render it. */
   lifecycle: LifecycleState;
   ctxPercent: number | null;
   model: string | null;
   thinking: string | null;
-  /** Configured prefix, for the help hint. */
   prefix: string;
   ascii: boolean;
 }
@@ -57,7 +40,6 @@ export class PineDeck extends Container {
   constructor(
     private tui: TUI,
     private theme: Theme,
-    private g: GlyphSet,
     private footerData: ReadonlyFooterDataProvider,
     info: DeckInfo,
   ) {
@@ -70,35 +52,35 @@ export class PineDeck extends Container {
     this.tui.requestRender();
   }
 
-  private line2(width: number): string {
+  private renderEnvironment(width: number): string[] {
     const i = this.info;
-    const gauge = contextGauge(i.ctxPercent, width >= 100 ? 10 : 6, i.ascii);
-    const model = modelChip(i.model);
-    const think = thinkingChip(i.thinking);
-    const branch =
-      typeof this.branch === "string" && this.branch
-        ? { text: fit(this.branch, 20), role: "muted" as const }
-        : null;
-    const hint =
-      width >= 80
-        ? { text: `${i.prefix} ? keys`, role: "muted" as const }
-        : null;
-    return styledChipLine(
-      [gauge, model, think, branch, hint],
-      width,
+    const hintText = width >= 80 ? `${i.prefix} ? keys` : `${i.prefix} ?`;
+    const separator = i.ascii ? "-" : "·";
+    const chips: (Chip | null)[] = [
+      contextGauge(i.ctxPercent, width >= 100 ? 10 : 6, i.ascii),
+      modelChip(i.model, i.ascii),
+      thinkingChip(i.thinking, i.ascii),
+      branchChip(this.branch, i.ascii),
+      { text: hintText, role: "muted" },
+    ];
+    const budget = Math.max(12, width - (width >= 60 ? 5 : 0));
+    const line = styledChipLine(
+      chips,
+      budget,
       (role, text) => {
-        const fn = ROLE[role] ?? ROLE.muted;
-        return fn(this.theme, text);
+        if (role === "muted" && text === hintText)
+          return surface(this.theme, "muted", text);
+        return style(this.theme, role, text);
       },
+      `  ${separator}  `,
+      (separatorText) => style(this.theme, "dim", separatorText),
+      i.ascii,
     );
+    if (width < 60) return [line];
+    return [`${strong(this.theme, "muted", "ENV")}  ${line}`.trimEnd()];
   }
 
   override render(width: number): string[] {
-    const t = this.theme;
-    const style = (role: string, s: string): string => {
-      const fn = ROLE[role] ?? ROLE.muted;
-      return fn(t, s);
-    };
     // Subscribe once; branch changes arrive via callback, not polling.
     if (this.branch === undefined) {
       this.branch = this.footerData.getGitBranch();
@@ -110,24 +92,9 @@ export class PineDeck extends Container {
         }
       });
     }
-    // Width, not rows: a short wide terminal still has a footer.
-    if (width < 60) {
-      return [
-        styledChipLine(
-          [
-            lifecycleChip(
-              this.info.lifecycle,
-              this.g,
-              Math.max(12, width - 20),
-            ),
-            contextGauge(this.info.ctxPercent, 6, this.info.ascii),
-          ],
-          width,
-          style,
-        ),
-      ];
-    }
-    return [this.line2(width)];
+    // Width, not rows: a short wide terminal still has a useful deck. At the
+    // smallest width, context and the discoverability hint are all that fit.
+    return this.renderEnvironment(width);
   }
 }
 
@@ -139,5 +106,6 @@ export function deckFactory(
   g: GlyphSet,
   info: DeckInfo,
 ): PineDeck {
-  return new PineDeck(tui, theme, g, footerData, info);
+  void g;
+  return new PineDeck(tui, theme, footerData, info);
 }

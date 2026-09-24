@@ -11,11 +11,21 @@
 
 /** Truecolor/256 SGR foreground wrapper for a trusted role color. */
 export type SgrRole =
-  "accent" | "muted" | "success" | "warning" | "error" | "text" | "reset";
+  | "accent"
+  | "muted"
+  | "dim"
+  | "border"
+  | "success"
+  | "warning"
+  | "error"
+  | "text"
+  | "reset";
 
 const SGR: Record<SgrRole, string> = {
   accent: "\x1b[38;2;127;208;160m",
   muted: "\x1b[38;2;125;136;127m",
+  dim: "\x1b[38;2;90;102;94m",
+  border: "\x1b[38;2;58;68;62m",
   success: "\x1b[38;2;127;208;160m",
   warning: "\x1b[38;2;216;198;144m",
   error: "\x1b[38;2;224;112;112m",
@@ -27,14 +37,16 @@ export function sgr(role: SgrRole, text: string): string {
   return `${SGR[role]}${text}${SGR.reset}`;
 }
 
-/** 256-color indexes. Legible on dark and light; not a per-theme hex match. */
+/** Terminal-named colors keep the strip legible in 16/256-color palettes. */
 const TMUX_COLOUR: Record<Exclude<SgrRole, "reset">, string> = {
-  accent: "colour72",
-  muted: "colour245",
-  success: "colour71",
-  warning: "colour178",
-  error: "colour167",
-  text: "colour252",
+  accent: "green",
+  muted: "brightblack",
+  dim: "brightblack",
+  border: "brightblack",
+  success: "green",
+  warning: "yellow",
+  error: "red",
+  text: "default",
 };
 
 /** Wrap trusted text in a tmux status style, or return it unchanged. */
@@ -52,7 +64,7 @@ export function escapeTmuxFormat(text: string): string {
   return text.replace(/#/g, "##");
 }
 
-/** Visible width of a styled string (SGR sequences are zero-width). */
+/** Visible width of a styled string (SGR and tmux directives are zero-width). */
 export function visibleWidth(styled: string): number {
   // Strip SGR and tmux style tokens, then count code points.
   const bare = styled

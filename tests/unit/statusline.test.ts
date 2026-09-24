@@ -192,7 +192,7 @@ describe("status line", () => {
     // basename escaping happens via plain(); the value must not contain a lone #
     assert.ok(value.includes("we##ird"));
     assert.equal(value.includes("\u001b"), false);
-    assert.match(value, /#\[fg=colour/);
+    assert.match(value, /#\[fg=/);
   });
   it("no-color mode omits style tokens", () => {
     const value = statusOptionValue(
@@ -244,19 +244,48 @@ describe("panels", () => {
       session: "abc123",
       bridge: false,
       slash: { ide: true, pinevim: true },
-      versions: { pi: "0.87.1", tmux: "tmux 3.5a", node: "26.1.0" },
+      versions: { pi: "0.87.1", tmux: "3.5a", node: "26.1.0" },
       editorNote: null,
       prefix: "F12",
     }).map((l) => l);
-    const bare = lines.join("\n");
+    const bare = stripTerminalSequences(lines.join("\n"));
     assert.match(bare, /workspace/);
     assert.match(bare, /--resume/);
     assert.match(bare, /0\.87\.1/);
+    assert.match(bare, /CHAT · agent/);
+    assert.match(bare, /Pi 0\.87\.1 · tmux 3\.5a/);
+    assert.match(bare, /node\s+Node 26\.1\.0/);
   });
   it("help lists slash commands", () => {
     const bare = helpPanelLines("F12").join("\n");
     assert.match(bare, /\/pinevim help/);
     assert.match(bare, /\/ide/);
+  });
+  it("panels have a complete ASCII fallback", () => {
+    const help = stripTerminalSequences(helpPanelLines("F12", true).join("\n"));
+    const status = stripTerminalSequences(
+      statusPanelLines(
+        liveState(),
+        {
+          workspace: "/tmp/ws",
+          session: "abc123",
+          bridge: true,
+          slash: { ide: true, pinevim: true },
+          versions: { pi: "0.87.1", tmux: "3.7c", node: "22.19.0" },
+          editorNote: null,
+          prefix: "F12",
+        },
+        true,
+      ).join("\n"),
+    );
+    for (const bare of [help, status]) {
+      assert.ok(
+        [...bare].every((ch) => (ch.codePointAt(0) ?? 0) <= 0x7f),
+        "ASCII panel mode emitted a non-ASCII glyph",
+      );
+    }
+    assert.match(help, /NAVIGATE/);
+    assert.match(help, /press any key to close/);
   });
   it("status popup uses telemetry waiting text", () => {
     const s = liveState();

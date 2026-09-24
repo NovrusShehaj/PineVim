@@ -17,6 +17,7 @@ export const PINEVIM_THEMES = [
   "pinevim-light",
   "pinevim-mono",
   "pinevim-neon",
+  "pinevim-cyberpunk",
   "pinevim-forest",
   "pinevim-snow",
 ] as const;

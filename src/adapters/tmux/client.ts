@@ -178,7 +178,13 @@ export class Tmux {
       "-T",
       "prefix",
       "m",
-      ...menuDisplayArgv(node, helper, this.runtime, prefix),
+      ...menuDisplayArgv(
+        node,
+        helper,
+        this.runtime,
+        prefix,
+        process.env.PINEVIM_UI_GLYPHS === "ascii",
+      ),
     );
     for (const [hook, event] of Object.entries({
       "client-resized": "resize",

@@ -1,55 +1,74 @@
 /**
- * PineComposer chip band (plan §10, §17): a PineVIM widget band rendered
- * directly above the editor via ctx.ui.setWidget("pinevim", ..., {placement:
- * "aboveEditor"}).
+ * PineComposer activity band.
  *
- * Divergence from the plan documented: Pi 0.87.1's CustomEditor draws its
- * borders inside private pi-tui internals (renderTopBorder is not virtual -
- * it is a private method), so a subclass cannot restyle borders without
- * patching dependency internals, which the guardrails forbid. The supported
- * equivalent for "PineVIM owns the composer frame" is the widget band above
- * the stock editor: identical information, full keybinding safety, and the
- * stock editor remains fully intact underneath.
+ * The band is the small "now" surface directly above Pi's editor. It stays
+ * intentionally quiet: the lifecycle and the next thing that needs attention
+ * come first, while environment facts live in the deck below. A leading rail
+ * gives the frame a consistent edge without drawing a heavy box around Pi's
+ * native composer.
  */
 import { Container, type TUI } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { type GlyphSet } from "../glyphs.js";
-import { type LifecycleState } from "../lifecycle.js";
-import {
-  contextGauge,
-  lifecycleChip,
-  modeChip,
-  queueChip,
-  styledChipLine,
-} from "../chips.js";
-
-type RoleStyle = (t: Theme, s: string) => string;
-const ROLE: {
-  [k: string]: RoleStyle | undefined;
-  accent: RoleStyle;
-  muted: RoleStyle;
-  success: RoleStyle;
-  warning: RoleStyle;
-  error: RoleStyle;
-  text: RoleStyle;
-} = {
-  accent: (t, s) => t.fg("accent", s),
-  muted: (t, s) => t.fg("muted", s),
-  success: (t, s) => t.fg("success", s),
-  warning: (t, s) => t.fg("warning", s),
-  error: (t, s) => t.fg("error", s),
-  text: (t, s) => t.fg("text", s),
-};
+import { fit, type GlyphSet } from "../glyphs.js";
+import { style, strong } from "../style.js";
+import { type LifecycleState, lifecycleLabel } from "../lifecycle.js";
+import { type RunState } from "../runs.js";
+import { queueChip, styledChipLine, type Chip } from "../chips.js";
 
 export interface BandInfo {
   mode: "CHAT" | "IDE";
+  focus?: "agent" | "editor";
   lifecycle: LifecycleState;
+  /** Pi only exposes a boolean for queued messages, but tests/tools may provide a count. */
   queued: number | boolean;
   ascii: boolean;
   ctxPercent: number | null;
   model: string | null;
   thinking: string | null;
   prefix: string;
+  /** Current user run, when Pi has started one. */
+  run?: RunState | null;
+}
+
+function elapsed(
+  run: RunState | null | undefined,
+  now = Date.now(),
+): string | null {
+  if (!run?.active || run.startedAt === null) return null;
+  const seconds = Math.max(0, (now - run.startedAt) / 1000);
+  if (seconds < 1) return null;
+  return seconds < 10 ? `${seconds.toFixed(1)} s` : `${Math.round(seconds)} s`;
+}
+
+function activityChip(info: BandInfo, g: GlyphSet, width: number): Chip {
+  const state = info.lifecycle;
+  const separator = info.ascii ? "-" : "·";
+  const ellipsis = info.ascii ? "..." : "…";
+  let text = lifecycleLabel(state, g);
+  const run = info.run;
+  const toolCount = Math.max(state.toolsRun, run?.tools ?? 0);
+  if (state.lifecycle === "tooling") {
+    const lastTool = state.lastTool
+      ? ` ${separator} ${fit(state.lastTool, 16, ellipsis)}`
+      : "";
+    text = `${g.running} tools ${toolCount}${lastTool}`;
+  } else if (state.lifecycle === "idle" && run?.active) {
+    text = `${g.running} run ${run.index}`;
+  }
+  const duration = elapsed(run);
+  if (duration) text += ` ${separator} ${duration}`;
+
+  const role: Chip["role"] =
+    state.lifecycle === "error"
+      ? "error"
+      : state.lifecycle === "waiting"
+        ? "accent"
+        : state.lifecycle === "interrupted"
+          ? "warning"
+          : state.lifecycle === "idle"
+            ? "success"
+            : "text";
+  return { text: fit(text, width, ellipsis), role };
 }
 
 export class PineBand extends Container {
@@ -71,21 +90,44 @@ export class PineBand extends Container {
   }
 
   override render(width: number): string[] {
-    // Below 60 the deck owns the single status line.
+    // The deck remains the single source for environment facts. Below the
+    // minimum frame width, leave the row to Pi's own editor chrome.
     if (width < 60) return [];
-    const t = this.theme;
     const i = this.info;
-    const style = (role: string, s: string): string => {
-      const fn = ROLE[role] ?? ROLE.muted;
-      return fn(t, s);
-    };
-    const chips = [
-      modeChip(i.mode),
-      lifecycleChip(i.lifecycle, this.g, Math.max(14, width - 24)),
-      queueChip(i.queued, this.g),
-      width < 80 ? contextGauge(i.ctxPercent, 6, i.ascii) : null,
-    ];
-    return [styledChipLine(chips, width, style)];
+    const budget = Math.max(20, width - 2);
+    const separator = i.ascii ? "-" : "·";
+    const chips: (Chip | null)[] = [];
+
+    if (width >= 80) {
+      const view =
+        i.mode === "IDE" && i.focus ? `${i.mode} ${i.focus}` : i.mode;
+      chips.push({ text: view, role: "accent" });
+    }
+    chips.push(activityChip(i, this.g, budget));
+
+    // A failure is useful after the run, but the lifecycle chip remains the
+    // primary message. Do not turn a normal tool error into permanent noise.
+    if (i.lifecycle.lifecycle !== "error" && (i.run?.failed ?? 0) > 0)
+      chips.push({
+        text: `${this.g.warning} ${i.run!.failed} failed`,
+        role: "warning",
+      });
+    chips.push(queueChip(i.queued, this.g));
+    if (width >= 100) chips.push({ text: `${i.prefix} ? keys`, role: "muted" });
+
+    const line = styledChipLine(
+      chips,
+      budget,
+      (role, text) => {
+        if (role === "accent" && text === i.mode)
+          return strong(this.theme, "accent", text);
+        return style(this.theme, role, text);
+      },
+      `  ${separator}  `,
+      (separatorText) => style(this.theme, "dim", separatorText),
+      i.ascii,
+    );
+    return [`${style(this.theme, "accent", this.g.rail)} ${line}`.trimEnd()];
   }
 }
 

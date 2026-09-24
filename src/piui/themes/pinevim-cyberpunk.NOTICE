@@ -1,0 +1,8 @@
+pinevim-cyberpunk is an adaptation of Cyberpunk Neon for the Pi theme format.
+
+name: Cyberpunk Neon
+author: Theo (theo-grivel)
+license: CC-BY-SA-4.0
+upstream: https://github.com/Roboron3042/Cyberpunk-Neon/blob/master/terminal/kitty/cyberpunk-neon.conf
+
+Changes: kitty ANSI colors were mapped onto PineVIM theme slots (text, accent, syntax, and panel backgrounds). This theme file is licensed CC-BY-SA-4.0. The rest of the PineVIM repository is MIT.

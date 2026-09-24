@@ -166,7 +166,10 @@ export default function pinevim(pi: ExtensionAPI): void {
         )
           throw new PineError("STALE", "Stale Pi context.");
         if (m.type === "view") {
-          pineUi?.setMode(m.payload.mode === "IDE" ? "IDE" : "CHAT");
+          pineUi?.setMode(
+            m.payload.mode === "IDE" ? "IDE" : "CHAT",
+            m.payload.focus === "editor" ? "editor" : "agent",
+          );
           return {};
         }
         if (m.type !== "shutdown" || !ctx)

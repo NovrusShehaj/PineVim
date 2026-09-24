@@ -58,6 +58,7 @@ import {
   WELCOME_TYPE,
   welcomeRenderer,
   type RunSummaryData,
+  type WelcomeData,
 } from "./renderers/runLedger.js";
 export * from "./renderers/cards.js";
 
@@ -104,6 +105,8 @@ export class PiUi {
   private band: ReturnType<typeof bandFactory> | null = null;
   private mode: "CHAT" | "IDE" =
     process.env.PINEVIM_IDE === "1" ? "IDE" : "CHAT";
+  private focus: "agent" | "editor" =
+    process.env.PINEVIM_IDE === "1" ? "editor" : "agent";
   private unsubs: (() => void)[] = [];
   private lastCtxPercent: number | null = null;
   private disposed = false;
@@ -153,15 +156,21 @@ export class PiUi {
       RUN_SUMMARY_TYPE,
       runSummaryRenderer(this.g) as never,
     );
-    this.pi.registerEntryRenderer<{ text: string }>(
+    this.pi.registerEntryRenderer<WelcomeData>(
       WELCOME_TYPE,
-      welcomeRenderer() as never,
+      welcomeRenderer(this.g) as never,
     );
     if (process.env.PINEVIM_WELCOME === "1") {
       const prefix = process.env.PINEVIM_UI_PREFIX || "F12";
-      this.pi.appendEntry(WELCOME_TYPE, {
-        text: `type to work · ${prefix} ? keys · /pinevim help`,
-      });
+      const separator = this.ui.glyphs === "ascii" ? "-" : "·";
+      const welcome: WelcomeData = {
+        lines: [
+          `${this.g.success} PineVim workspace ready`,
+          `type to work ${separator} ${prefix} ? keys ${separator} /pinevim help`,
+          `review the last run with /pinevim review ${separator} learned skills with /pinevim skills`,
+        ],
+      };
+      this.pi.appendEntry<WelcomeData>(WELCOME_TYPE, welcome);
     }
 
     // Frame registration is deferred past Pi's startup sequence: verified via
@@ -192,6 +201,7 @@ export class PiUi {
             workspace: workspaceDisplay(ctx.cwd),
             sessionName: this.pi.getSessionName?.() ?? null,
             mode: this.mode,
+            focus: this.focus,
             lifecycle: this.state,
           });
         }
@@ -254,7 +264,9 @@ export class PiUi {
   private bandInfo(): BandInfo {
     return {
       mode: this.mode,
+      focus: this.focus,
       lifecycle: this.state,
+      run: this.run,
       queued: this.ctx.hasPendingMessages(),
       ascii: this.ui.glyphs === "ascii",
       ctxPercent: this.lastCtxPercent,
@@ -267,15 +279,54 @@ export class PiUi {
   private refresh(): void {
     if (this.disposed) return;
     this.lastCtxPercent = contextPercent(this.ctx);
+    this.updateWorkingMessage();
     this.header?.update({
       workspace: workspaceDisplay(this.ctx.cwd),
       sessionName: this.pi.getSessionName?.() ?? null,
       mode: this.mode,
+      focus: this.focus,
       lifecycle: this.state,
     });
     this.deck?.update(this.deckInfo());
     this.band?.update(this.bandInfo());
     this.onTelemetry?.();
+  }
+
+  /** Keep Pi's native loader informative without taking over its spinner. */
+  private updateWorkingMessage(): void {
+    const ui = this.ctx.ui as typeof this.ctx.ui & {
+      setWorkingMessage?: (message?: string) => void;
+    };
+    if (typeof ui.setWorkingMessage !== "function") return;
+    const message = (() => {
+      switch (this.state.lifecycle) {
+        case "thinking":
+          return "Thinking through it...";
+        case "streaming":
+          return "Responding...";
+        case "tooling":
+          return this.state.lastTool
+            ? `Working with ${this.state.lastTool}...`
+            : "Running tools...";
+        case "waiting":
+          return "Waiting for you...";
+        case "compacting":
+          return "Compacting context...";
+        case "settling":
+          return "Finishing up...";
+        case "error":
+          return "Run failed - see the run summary";
+        case "interrupted":
+          return "Run stopped";
+        default:
+          return undefined;
+      }
+    })();
+    try {
+      ui.setWorkingMessage(message);
+    } catch {
+      /* loader copy is cosmetic; never fail lifecycle rendering for it */
+    }
   }
 
   private wireEvents(): void {
@@ -442,8 +493,9 @@ export class PiUi {
   };
 
   /** View transition feedback from successful controller intents. */
-  setMode(mode: "CHAT" | "IDE"): void {
+  setMode(mode: "CHAT" | "IDE", focus?: "agent" | "editor"): void {
     this.mode = mode;
+    this.focus = focus ?? (mode === "IDE" ? "editor" : "agent");
     this.refresh();
   }
 

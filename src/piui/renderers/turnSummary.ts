@@ -5,7 +5,7 @@
  */
 import type { Component } from "@earendil-works/pi-tui";
 import type { CustomEntry, Theme } from "@earendil-works/pi-coding-agent";
-import { type GlyphSet } from "../glyphs.js";
+import { fit, type GlyphSet } from "../glyphs.js";
 
 export const TURN_SUMMARY_TYPE = "pinevim.turn_summary";
 
@@ -44,11 +44,14 @@ export function renderTurnSummaryLine(
   if (dur) parts.push(dur);
   if (data.ctxPercent !== null)
     parts.push(`ctx ${Math.round(data.ctxPercent)}%`);
-  const label = data.interrupted ? "interrupted · " : "";
-  const head = `${g.rule} ${label}${parts.join(" · ")} `;
+  const separator = g.rule === "-" ? "-" : "·";
+  const ellipsis = g.rule === "-" ? "..." : "…";
+  const label = data.interrupted ? `interrupted ${separator} ` : "";
+  const head = `${g.rule} ${label}${parts.join(` ${separator} `)} `;
   const used = [...head].length + 1;
   const fill = used < width ? g.rule.repeat(width - used) : "";
-  return `${head}${fill}`;
+  const line = `${head}${fill}`;
+  return [...line].length > width ? fit(line, width, ellipsis) : line;
 }
 
 export function turnSummaryRenderer(

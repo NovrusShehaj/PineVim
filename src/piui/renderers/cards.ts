@@ -188,6 +188,10 @@ export function formatToolCardLine(
   width: number,
 ): string {
   const glyph = toolStateGlyph(info.state, g);
+  const ascii = g.rule === "-";
+  const ellipsis = ascii ? "..." : "…";
+  const normalize = (value: string): string =>
+    ascii ? value.replace(/[·•]/g, "-").replace(/[−–—]/g, "-") : value;
   if (width < 60) {
     // Narrow terminal: glyph and tool name only
     return `${glyph} ${info.tool}`;
@@ -201,7 +205,7 @@ export function formatToolCardLine(
     // 60-79 cols: glyph, tool, truncated primary arg, duration
     const prefix = `${glyph} ${info.tool} `;
     const avail = Math.max(8, width - prefix.length - durStr.length);
-    const primary = fit(info.primaryArg, avail);
+    const primary = fit(normalize(info.primaryArg), avail, ellipsis);
     return `${prefix}${primary}${durStr}`;
   }
 
@@ -210,16 +214,16 @@ export function formatToolCardLine(
     const prefix = `${glyph} ${info.tool} `;
     const suffix = `${countsStr}${durStr}`;
     const avail = Math.max(12, width - prefix.length - suffix.length);
-    const primary = fit(info.primaryArg, avail);
+    const primary = fit(normalize(info.primaryArg), avail, ellipsis);
     return `${prefix}${primary}${suffix}`;
   }
 
   // >= 101 cols: full args + secondary + counts + duration
   const prefix = `${glyph} ${info.tool} `;
-  const sec = info.secondaryArg ? `  ${info.secondaryArg}` : "";
+  const sec = info.secondaryArg ? `  ${normalize(info.secondaryArg)}` : "";
   const suffix = `${sec}${countsStr}${durStr}`;
   const avail = Math.max(16, width - prefix.length - suffix.length);
-  const primary = fit(info.primaryArg, avail);
+  const primary = fit(normalize(info.primaryArg), avail, ellipsis);
   return `${prefix}${primary}${suffix}`;
 }
 

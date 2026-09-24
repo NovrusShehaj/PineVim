@@ -23,6 +23,7 @@ import {
 import { Store, type Metadata } from "../persistence.js";
 import { type Config } from "../config.js";
 import { editorCommand } from "../editor.js";
+import { themeDirectory } from "../piui/theme.js";
 import {
   Logger,
   PineError,
@@ -249,6 +250,7 @@ export class AppController {
         this.bridgeStatus(m.payload);
         await this.persist();
         await this.renderStatus();
+        await this.pushView();
       }
       return {};
     }
@@ -370,7 +372,22 @@ export class AppController {
             "IDENTITY",
             "An untracked pane exists in the workspace window, possibly from an interrupted editor creation. Inspect it before opening another editor; existing processes are preserved.",
           );
-        const argv = await editorCommand(this.config.nvim);
+        const argv = await editorCommand(
+          this.config.nvim,
+          this.metadata.runtime,
+        );
+        await this.tmux.command(
+          "set-environment",
+          "-g",
+          "PINEVIM_THEME_DIR",
+          themeDirectory(),
+        );
+        await this.tmux.command(
+          "set-environment",
+          "-g",
+          "PINEVIM_UI_THEME",
+          this.config.ui.theme,
+        );
         const target = this.state.agent?.pane;
         if (!target)
           throw new PineError("AGENT", "No agent pane; retry Pi first.");
@@ -582,6 +599,7 @@ export class AppController {
       PINEVIM_UI_MOTION: this.config.ui.motion,
       PINEVIM_UI_GLYPHS: this.config.ui.glyphs,
       PINEVIM_UI_THEME: this.config.ui.theme,
+      PINEVIM_THEME_DIR: themeDirectory(),
       ...(this.welcome ? { PINEVIM_WELCOME: "1" } : {}),
       // Spawn-time view snapshot for the in-pane header (resumed workspaces
       // start in their persisted mode); live updates arrive via intents.
@@ -609,10 +627,11 @@ export class AppController {
 
   /** Show a help/status popup; falls back to a plain toast on failure. */
   private async showPanel(kind: "help" | "status"): Promise<void> {
+    const ascii = process.env.PINEVIM_UI_GLYPHS === "ascii";
     try {
       if (kind === "help") {
         await this.tmux.popup(
-          helpPanelLines(this.config.prefix),
+          helpPanelLines(this.config.prefix, ascii),
           70,
           process.execPath,
           helper,
@@ -634,7 +653,7 @@ export class AppController {
             "copied" | "not copied",
         };
         await this.tmux.popup(
-          statusPanelLines(this.state, facts),
+          statusPanelLines(this.state, facts, ascii),
           70,
           process.execPath,
           helper,

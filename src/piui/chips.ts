@@ -28,17 +28,18 @@ export function lifecycleChip(
   width = 28,
 ): Chip {
   const label = lifecycleLabel(s, g);
+  const ellipsis = g.rule === "-" ? "..." : "…";
   switch (s.lifecycle) {
     case "error":
-      return { text: fit(label, width), role: "error" };
+      return { text: fit(label, width, ellipsis), role: "error" };
     case "waiting":
-      return { text: fit(label, width), role: "accent" };
+      return { text: fit(label, width, ellipsis), role: "accent" };
     case "interrupted":
-      return { text: fit(label, width), role: "warning" };
+      return { text: fit(label, width, ellipsis), role: "warning" };
     case "idle":
-      return { text: fit(label, width), role: "success" };
+      return { text: fit(label, width, ellipsis), role: "success" };
     default:
-      return { text: fit(label, width), role: "text" };
+      return { text: fit(label, width, ellipsis), role: "text" };
   }
 }
 
@@ -63,17 +64,38 @@ export function contextGauge(
   const off = ascii ? "-" : "▯";
   const bar = on.repeat(filled) + off.repeat(Math.max(0, width - filled));
   return {
-    text: `${bar} ${clamped}%`,
+    text: `ctx ${bar} ${clamped}%`,
     role: clamped >= 90 ? "error" : clamped >= 75 ? "warning" : "muted",
   };
 }
 
-export function modelChip(model: string | null | undefined): Chip | null {
+export function modelChip(
+  model: string | null | undefined,
+  ascii = false,
+): Chip | null {
   if (!model) return null;
-  return { text: fit(model, 24), role: "muted" };
+  return {
+    text: `model ${fit(model, 18, ascii ? "..." : "…")}`,
+    role: "muted",
+  };
 }
 
-export function thinkingChip(level: string | null | undefined): Chip | null {
+/** Git branch is environment context, so it belongs in the footer deck. */
+export function branchChip(
+  branch: string | null | undefined,
+  ascii = false,
+): Chip | null {
+  if (!branch) return null;
+  return {
+    text: `branch ${fit(branch, 16, ascii ? "..." : "…")}`,
+    role: "muted",
+  };
+}
+
+export function thinkingChip(
+  level: string | null | undefined,
+  ascii = false,
+): Chip | null {
   if (!level) return null;
   const short: Record<string, string> = {
     off: "off",
@@ -84,7 +106,10 @@ export function thinkingChip(level: string | null | undefined): Chip | null {
     xhigh: "xhigh",
     max: "max",
   };
-  return { text: `think ${short[level] ?? level}`, role: "muted" };
+  return {
+    text: `think ${fit(short[level] ?? level, 12, ascii ? "..." : "…")}`,
+    role: "muted",
+  };
 }
 
 /** Render chips with a separator, fitting to the width budget. */
@@ -92,6 +117,7 @@ export function chipLine(
   chips: (Chip | null)[],
   width: number,
   sep = "  ·  ",
+  ascii = false,
 ): string {
   const present = chips.filter((c): c is Chip => c !== null);
   const texts = present.map((c) => c.text);
@@ -104,7 +130,9 @@ export function chipLine(
     line = line.slice(0, -1);
   }
   const joined = line.join(sep);
-  return joined.length > width ? fit(joined, width) : joined;
+  return joined.length > width
+    ? fit(joined, width, ascii ? "..." : "…")
+    : joined;
 }
 
 /** Same fit rules as chipLine, with each surviving chip styled by its role. */
@@ -113,6 +141,8 @@ export function styledChipLine(
   width: number,
   style: (role: Chip["role"], text: string) => string,
   sep = "  ·  ",
+  styleSeparator?: (text: string) => string,
+  ascii = false,
 ): string {
   const present = chips.filter((c): c is Chip => c !== null);
   const budget = (line: Chip[]): number =>
@@ -121,6 +151,7 @@ export function styledChipLine(
   let line = present;
   while (line.length > 1 && budget(line) > width) line = line.slice(0, -1);
   if (line.length === 1 && line[0] && [...line[0].text].length > width)
-    return style(line[0].role, fit(line[0].text, width));
-  return line.map((c) => style(c.role, c.text)).join(sep);
+    return style(line[0].role, fit(line[0].text, width, ascii ? "..." : "…"));
+  const separator = styleSeparator?.(sep) ?? sep;
+  return line.map((c) => style(c.role, c.text)).join(separator);
 }

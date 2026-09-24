@@ -14,7 +14,7 @@
  */
 import { basename } from "node:path";
 import { plain } from "../../diagnostics.js";
-import { fit } from "../../piui/glyphs.js";
+import { fit, glyphs } from "../../piui/glyphs.js";
 import { tmuxFg, visibleWidth, type SgrRole } from "./styled.js";
 import type { State } from "../../core/state.js";
 
@@ -47,41 +47,40 @@ const MODE_LABEL: Record<State["mode"], string> = {
 
 function agentSegment(input: StatusInput): { text: string; role: SgrRole } {
   const s = input.state;
-  // The strip is ASCII so the status option survives terminals and sanitizers.
-  const g = "*";
-  void input.ascii;
+  const g = glyphs(input.ascii ? "ascii" : "unicode");
   // Distinguish "never launched" from "launched then died": a null Child is
   // the pre-launch window, not a crash (state.ts models agent as Child | null).
-  if (s.agent === null) return { text: `${g} agent starting`, role: "muted" };
+  if (s.agent === null)
+    return { text: `${g.running} agent starting`, role: "muted" };
   if (!s.agent.alive)
     return {
-      text: `${g} pi dead · prefix r after confirmation`,
+      text: `${g.failure} pi dead · prefix r after confirmation`,
       role: "error",
     };
   if (!s.bridge)
     return {
-      text: `${g} bridge down · prefix still works · --resume`,
+      text: `${g.warning} bridge disconnected · prefix still works · --resume`,
       role: "warning",
     };
   const t = input.telemetry;
   const lifecycle = t?.lifecycle ?? (s.busy ? "run" : "idle");
   switch (lifecycle) {
     case "idle":
-      return { text: `${g} agent idle`, role: "success" };
+      return { text: `${g.running} agent idle`, role: "success" };
     case "waiting":
       return {
-        text: `${g} needs you${t?.waitingKind ? ` (${t.waitingKind})` : ""}`,
+        text: `${g.waiting} needs you${t?.waitingKind ? ` (${t.waitingKind})` : ""}`,
         role: "accent",
       };
     case "error":
-      return { text: `${g} agent error`, role: "error" };
+      return { text: `${g.failure} agent error`, role: "error" };
     case "interrupted":
-      return { text: `${g} stopped`, role: "warning" };
+      return { text: `${g.stopped} stopped`, role: "warning" };
     case "compacting":
-      return { text: `${g} compacting`, role: "muted" };
+      return { text: `${g.compacting} compacting`, role: "muted" };
     default:
       return {
-        text: `${g} agent ${lifecycle}${t?.toolsRun ? ` ${t.toolsRun}` : ""}`,
+        text: `${g.running} agent ${lifecycle}${t?.toolsRun ? ` ${t.toolsRun}` : ""}`,
         role: "text",
       };
   }
@@ -89,7 +88,11 @@ function agentSegment(input: StatusInput): { text: string; role: SgrRole } {
 
 function segments(input: StatusInput): { text: string; role: SgrRole }[] {
   const s = input.state;
-  const workspace = fit(plain(basename(input.workspace), 24), 24);
+  const workspace = fit(
+    plain(basename(input.workspace), 24),
+    24,
+    input.ascii ? "..." : "…",
+  );
   const mode = MODE_LABEL[s.mode];
   const focus = s.mode === "CHAT_ONLY" ? null : s.focus;
   const modeText = focus ? `${mode} ${focus}` : mode;
@@ -135,7 +138,7 @@ export function statusLine(input: StatusInput, color = true): string {
     const first = segs[0]!;
     return tmuxFg(
       first.role,
-      fit(first.text, budget).replace(/#/g, "##"),
+      fit(first.text, budget, input.ascii ? "..." : "…").replace(/#/g, "##"),
       color,
     );
   }

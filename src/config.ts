@@ -31,6 +31,7 @@ export interface UiConfig {
     | "pinevim-light"
     | "pinevim-mono"
     | "pinevim-neon"
+    | "pinevim-cyberpunk"
     | "pinevim-forest"
     | "pinevim-snow";
 }
@@ -146,12 +147,13 @@ export function validateConfig(input: unknown): Config {
               item !== "pinevim-light" &&
               item !== "pinevim-mono" &&
               item !== "pinevim-neon" &&
+              item !== "pinevim-cyberpunk" &&
               item !== "pinevim-forest" &&
               item !== "pinevim-snow"
             )
               throw new PineError(
                 "CONFIG",
-                "ui.theme must be auto or a pinevim theme (dark, light, mono, neon, forest, snow).",
+                "ui.theme must be auto or a pinevim theme (dark, light, mono, neon, cyberpunk, forest, snow).",
               );
             ui.theme = item;
           }

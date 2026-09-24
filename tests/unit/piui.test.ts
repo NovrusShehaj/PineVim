@@ -501,10 +501,12 @@ describe("theme assets", () => {
   it("covers the mono theme and the color variants", () => {
     assert.ok(PINEVIM_THEMES.includes("pinevim-mono"));
     assert.ok(PINEVIM_THEMES.includes("pinevim-neon"));
+    assert.ok(PINEVIM_THEMES.includes("pinevim-cyberpunk"));
     assert.ok(PINEVIM_THEMES.includes("pinevim-forest"));
     assert.ok(PINEVIM_THEMES.includes("pinevim-snow"));
     assert.ok(isPinevimThemeName("pinevim-mono"));
     assert.ok(isPinevimThemeName("pinevim-neon"));
+    assert.ok(isPinevimThemeName("pinevim-cyberpunk"));
     assert.ok(isPinevimThemeName("pinevim-forest"));
     assert.ok(isPinevimThemeName("pinevim-snow"));
     assert.ok(!isPinevimThemeName("pinevim-neonx"));
@@ -1202,9 +1204,22 @@ describe("frame surfaces", () => {
       model: "gpt-test",
       thinking: "medium",
       prefix: "F12",
+      run: {
+        active: true,
+        index: 2,
+        startedAt: Date.now() - 5200,
+        tools: 1,
+        failed: 0,
+        interrupted: false,
+        toolPaths: [],
+        toolNames: ["bash"],
+      },
     });
     const line = stripTerminalSequences(band.render(100).join("\\n"));
     assert.match(line, /CHAT/);
+    assert.match(line, /tools 1/);
+    assert.match(line, /bash/);
+    assert.match(line, /5\.2 s|5\.0 s/);
     assert.match(line, /F12 \? keys/);
   });
 
