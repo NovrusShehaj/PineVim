@@ -8,6 +8,13 @@ import type { Peer } from "../../control/protocol.js";
 import { commandOwnership } from "./compatibility.js";
 import { safeError, PineError } from "../../diagnostics.js";
 import type { Intent } from "../../core/state.js";
+import { PiUi, hooksSatisfied, probeHooks } from "../../piui/index.js";
+import {
+  ideArgumentCompletions,
+  pinevimArgumentCompletions,
+} from "../../piui/completions.js";
+import { applyTheme, themePaths } from "../../piui/theme.js";
+import type { UiConfig } from "../../config.js";
 export function parseCommand(command: "ide" | "pinevim", args: string): Intent {
   const input = args.trim().split(/\s+/).filter(Boolean).join(" ");
   const commands: Record<string, Intent> =
@@ -44,12 +51,25 @@ export default function pinevim(pi: ExtensionAPI): void {
     stopped = true,
     draining = false;
   let ownership = { ide: false, pinevim: false };
+  // PineVIM UI configuration arrives via the controller's environment (strict
+  // config surfaced as bounded flags) so the extension stays config-file free.
+  const uiConfig = (): UiConfig & { prefix?: string } => ({
+    enabled: process.env.PINEVIM_UI !== "0",
+    motion: process.env.PINEVIM_UI_MOTION === "off" ? "off" : "on",
+    glyphs: process.env.PINEVIM_UI_GLYPHS === "ascii" ? "ascii" : "unicode",
+    theme: process.env.PINEVIM_UI_THEME as UiConfig["theme"],
+    prefix: process.env.PINEVIM_UI_PREFIX ?? "F12",
+  });
+  let pineUi: PiUi | null = null;
   const data = (): Record<string, unknown> => ({
     cwd: ctx!.cwd,
     sessionId: ctx!.sessionManager.getSessionId(),
     sessionFile: ctx!.sessionManager.getSessionFile() ?? null,
     busy: !ctx!.isIdle() || ctx!.hasPendingMessages(),
     ...ownership,
+    // Additive telemetry (protocol v1.1): the controller validates strictly,
+    // so these are only sent after its schema accepts them.
+    ...(pineUi ? { telemetry: pineUi.telemetryLine() } : {}),
   });
   const report = async (): Promise<void> => {
     if (peer && !peer.closed && ctx) {
@@ -173,9 +193,78 @@ export default function pinevim(pi: ExtensionAPI): void {
       pi.getCommands(),
       fileURLToPath(import.meta.url),
     );
+    installUi(pi, context);
     void reconnect(generation);
   });
-  pi.on("session_shutdown", () => stop());
+
+  /**
+   * Install the PineVIM frame (plan §14, §29). Gates in order:
+   * 1. config opt-out (ui.enabled=false) => stock Pi;
+   * 2. TUI mode only (rpc/print get no in-pane UI);
+   * 3. capability probe (missing hooks) => stock Pi + one-time notice;
+   * 4. conflict check: an editor/header/footer already installed by another
+   *    extension => PineVIM stands down with a one-time notice (never destroys
+   *    user customizations; last-writer-wins would do exactly that).
+   */
+  function installUi(api: ExtensionAPI, context: ExtensionContext): void {
+    const cfg = uiConfig();
+    if (!cfg.enabled) return;
+    if (context.mode !== "tui") return;
+    try {
+      const hooks = probeHooks(api, context);
+      if (!hooksSatisfied(hooks)) {
+        context.ui.notify(
+          "PineVim UI unavailable in this Pi version; running stock Pi chat. Prefix controls are unaffected.",
+          "warning",
+        );
+        return;
+      }
+      const conflict =
+        context.ui.getEditorComponent() !== undefined ||
+        // setHeader/setFooter have no getters; detect via widget/installed
+        // markers is unreliable, so only the editor exposes a getter. The
+        // header/footer stand-down relies on Pi's last-writer-wins plus our
+        // own registration order (session_start, before user reloads).
+        false;
+      if (conflict) {
+        context.ui.notify(
+          "Another extension provides a custom editor; PineVim UI stood down to avoid overriding it.",
+          "warning",
+        );
+        return;
+      }
+      pineUi = new PiUi(api, context, context.ui.theme, cfg);
+      pineUi.install();
+      // Non-persistent theme application (plan §12): Theme *instance* never
+      // writes settings.json. A failure means the name was unavailable —
+      // degrade silently; the user's current theme stays active. "auto" keeps
+      // the theme Pi already resolved (its detection covers terminal
+      // background / COLORFGBG); only an explicit pinevim-* name switches.
+      if (
+        cfg.theme &&
+        cfg.theme !== "auto" &&
+        typeof context.ui.getTheme === "function"
+      ) {
+        applyTheme(context.ui, cfg.theme);
+      }
+    } catch (e) {
+      pineUi?.dispose();
+      pineUi = null;
+      context.ui.notify(
+        `PineVim UI failed to install; running stock Pi chat. ${safeError(e)}`,
+        "warning",
+      );
+    }
+  }
+
+  pi.on("resources_discover", (_event, _context) => ({
+    themePaths: themePaths(),
+  }));
+  pi.on("session_shutdown", () => {
+    stop();
+    pineUi?.dispose();
+    pineUi = null;
+  });
   const update = (_event: unknown, context: ExtensionContext): void => {
     ctx = context;
     void report();
@@ -193,6 +282,13 @@ export default function pinevim(pi: ExtensionAPI): void {
         command === "ide"
           ? "Open/close the live editor view"
           : "PineVim workspace controls",
+      // Native argument completion (plan §28): Pi merges extension commands
+      // into its built-in provider, which replaces exactly the typed argument
+      // text — no custom autocomplete wrapper needed.
+      getArgumentCompletions:
+        command === "ide"
+          ? ideArgumentCompletions
+          : pinevimArgumentCompletions,
       handler: async (args, context) => {
         try {
           if (!ownership.pinevim || (command === "ide" && !ownership.ide))
@@ -205,12 +301,17 @@ export default function pinevim(pi: ExtensionAPI): void {
               "DISCONNECTED",
               "PineVim controller disconnected. Use pinevim --resume from the workspace.",
             );
+          const intent = parseCommand(command, args);
           const reply = await peer.request(
             "intent",
-            { intent: parseCommand(command, args) },
+            { intent },
             generation,
             epoch,
           );
+          // The controller owns layout truth, but the header/band need the
+          // view immediately; intent success is the observable transition.
+          if (intent === "ide.open") pineUi?.setMode("IDE");
+          else if (intent === "chat") pineUi?.setMode("CHAT");
           if (reply.message) context.ui.notify(String(reply.message), "info");
         } catch (e) {
           context.ui.notify(safeError(e), "warning");

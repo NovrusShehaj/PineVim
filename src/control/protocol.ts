@@ -77,9 +77,18 @@ export function parseRecord(line: string): RecordMessage {
       "sessionId",
       "sessionFile",
       "busy",
+      "telemetry",
     ],
     intent: ["intent"],
-    status: ["sessionId", "sessionFile", "busy", "ide", "pinevim", "cwd"],
+    status: [
+      "sessionId",
+      "sessionFile",
+      "busy",
+      "ide",
+      "pinevim",
+      "cwd",
+      "telemetry",
+    ],
     event: ["event"],
     shutdown: ["cancel"],
     confirm: ["nonce", "action"],
@@ -127,6 +136,13 @@ export function parseRecord(line: string): RecordMessage {
     if (p[k] !== undefined && typeof p[k] !== "boolean") valid = false;
   for (const k of ["cwd", "sessionFile"])
     if (p[k] !== undefined && p[k] !== null && !text(p[k])) valid = false;
+  // Additive telemetry line (v1.1): `lifecycle|run|failed|turn|wait|ctx`.
+  // Bounded ASCII; malformed values are rejected (the controller then falls
+  // back to the busy bit rather than rendering untrusted content).
+  if (p.telemetry !== undefined) {
+    if (!text(p.telemetry, 64) || !/^[a-z|0-9-]+$/.test(p.telemetry as string))
+      valid = false;
+  }
   if (
     p.sessionId !== undefined &&
     p.sessionId !== null &&

@@ -10,6 +10,29 @@ export interface Config {
   nvim: string;
   tmux: string;
   logLevel: "off" | "debug";
+  /** PineVIM in-pane UI controls (plan §30). Absent fields keep defaults. */
+  ui: UiConfig;
+}
+export interface UiConfig {
+  /** Master switch for the PineVIM frame inside the Pi pane. */
+  enabled: boolean;
+  /** Terminal-safe motion: animated working indicator vs static glyph. */
+  motion: "on" | "off";
+  /** Glyph vocabulary: Unicode with ASCII fallback per glyph. */
+  glyphs: "unicode" | "ascii";
+  /**
+   * PineVIM theme (plan §12): "auto" follows the terminal color mode;
+   * explicit pinevim-* names pin that theme. Applied non-persistently;
+   * the user's Pi theme choice is only overridden while PineVIM runs.
+   */
+  theme:
+    | "auto"
+    | "pinevim-dark"
+    | "pinevim-light"
+    | "pinevim-mono"
+    | "pinevim-neon"
+    | "pinevim-forest"
+    | "pinevim-snow";
 }
 export const defaults: Config = {
   prefix: "F12",
@@ -18,6 +41,7 @@ export const defaults: Config = {
   nvim: "nvim",
   tmux: "tmux",
   logLevel: "off",
+  ui: { enabled: true, motion: "on", glyphs: "unicode", theme: "auto" },
 };
 export function xdg(name: string, fallback: string): string {
   const value = process.env[name];
@@ -78,6 +102,62 @@ export function validateConfig(input: unknown): Config {
         if (value !== "off" && value !== "debug")
           throw new PineError("CONFIG", "logLevel must be off or debug.");
         c.logLevel = value;
+        break;
+      case "ui": {
+        if (!value || typeof value !== "object" || Array.isArray(value))
+          throw new PineError("CONFIG", "ui must be an object.");
+        const ui: UiConfig = { ...defaults.ui };
+        // defaults.ui is shared; give each parse its own copy so a partial
+        // ui section cannot mutate the defaults object.
+        ui.theme = "auto";
+        for (const [key, item] of Object.entries(value)) {
+          if (
+            key !== "enabled" &&
+            key !== "motion" &&
+            key !== "glyphs" &&
+            key !== "theme"
+          )
+            throw new PineError(
+              "CONFIG",
+              "Unknown field in ui config; allowed: enabled, motion, glyphs, theme.",
+            );
+          if (key === "enabled") {
+            if (typeof item !== "boolean")
+              throw new PineError("CONFIG", "ui.enabled must be a boolean.");
+            ui.enabled = item;
+          }
+          if (key === "motion") {
+            if (item !== "on" && item !== "off")
+              throw new PineError("CONFIG", "ui.motion must be on or off.");
+            ui.motion = item;
+          }
+          if (key === "glyphs") {
+            if (item !== "unicode" && item !== "ascii")
+              throw new PineError(
+                "CONFIG",
+                "ui.glyphs must be unicode or ascii.",
+              );
+            ui.glyphs = item;
+          }
+          if (key === "theme") {
+            if (
+              item !== "auto" &&
+              item !== "pinevim-dark" &&
+              item !== "pinevim-light" &&
+              item !== "pinevim-mono" &&
+              item !== "pinevim-neon" &&
+              item !== "pinevim-forest" &&
+              item !== "pinevim-snow"
+            )
+              throw new PineError(
+                "CONFIG",
+                "ui.theme must be auto or a pinevim theme (dark, light, mono, neon, forest, snow).",
+              );
+            ui.theme = item;
+          }
+        }
+        c.ui = ui;
+      }
     }
   }
   return c;

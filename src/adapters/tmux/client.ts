@@ -58,6 +58,7 @@ export class Tmux {
     rows: number,
     argv: string[],
     instance: string,
+    childEnv: Record<string, string> = {},
   ): Promise<Pane> {
     const pane = await this.command(
       "new-session",
@@ -75,6 +76,10 @@ export class Tmux {
       "#{pane_id}",
       ...argv,
     );
+    // Child-facing UI flags ride the server-global environment; every value is
+    // a bounded PineVIM-authored token, not user input.
+    for (const [key, value] of Object.entries(childEnv))
+      await this.command("set-environment", "-g", key, value);
     await this.command("set-option", "-g", "@pinevim-instance", instance);
     const found = (await this.inventory()).find((p) => p.pane === pane);
     if (!found)
@@ -154,6 +159,8 @@ export class Tmux {
       Right: "width.more",
       q: "quit",
       r: "retry",
+      s: "status",
+      m: "menu",
       "?": "help",
     }))
       await this.command(
@@ -286,8 +293,60 @@ export class Tmux {
       literal(message, 500),
     );
   }
-  async notify(message: string): Promise<void> {
-    await this.command("display-message", "-d", "8000", literal(message, 500));
+  async notify(
+    message: string,
+    severity?: "info" | "warning" | "error",
+  ): Promise<void> {
+    const prefix =
+      severity === "error"
+        ? "pinevim error: "
+        : severity === "warning"
+          ? "pinevim warning: "
+          : message.startsWith("pinevim")
+            ? ""
+            : "pinevim: ";
+    await this.command(
+      "display-message",
+      "-d",
+      "8000",
+      literal(`${prefix}${message}`, 500),
+    );
+  }
+
+  /**
+   * Show a popup panel (plan §24). Lines are pre-escaped PineVIM-authored
+   * strings. The payload is delivered through `tmux run-shell` quoting into a
+   * printf command: argv stays bounded (<= 900 chars payload) and no shell
+   * interpolation of user data occurs (payload has no single quotes after
+   * escaping, since content is PineVIM-authored with plain() applied).
+   */
+  async popup(lines: string[], maxWidth: number): Promise<void> {
+    const width = Math.min(maxWidth, 80);
+    const height = Math.min(lines.length + 2, 20);
+    const payload = lines.join("\n").slice(0, 900);
+    const shellPayload = payload.replace(/\n/g, "\\n").replace(/'/g, "'\\''");
+    await this.command(
+      "display-popup",
+      "-E",
+      "-w",
+      String(width),
+      "-h",
+      String(height),
+      "-x",
+      "50%",
+      "-y",
+      "40%",
+      `printf '%b' '${shellPayload}'; read -n 1`,
+    );
+  }
+
+  /** Context menu; values are controller intents (fixed vocabulary). */
+  async menu(entries: { name: string; value: string }[]): Promise<void> {
+    const argv: string[] = ["display-menu", "-T", "pinevim"];
+    for (const e of entries.slice(0, 8)) {
+      argv.push("-t", "", e.name, e.value);
+    }
+    await this.command(...argv);
   }
   async confirm(
     message: string,

@@ -1,0 +1,420 @@
+/**
+ * PineVIM in-pane UI coordinator (plan §6, §14, §17).
+ *
+ * Installs the PineVIM frame through Pi's public extension hooks:
+ *   setHeader(banner), setFooter(deck), setWidget(chip band above editor),
+ *   setWorkingIndicator(frames), registerEntryRenderer(turn summaries).
+ *
+ * Pi 0.87.1 factory semantics (verified in interactive-mode.js): setHeader/
+ * setFooter/setWidget factories are invoked synchronously at registration and
+ * receive the live TUI as their first argument — ctx.ui itself does NOT expose
+ * a tui instance. Components are therefore created inside the factories (which
+ * also lets update() drive redraws through tui.requestRender()).
+ *
+ * Safety gates (plan §21, §29):
+ * - capability check: any missing hook => PineVIM UI disabled with a notice;
+ * - conflict check: a custom editor already installed by another extension
+ *   => stand down (last-writer-wins would silently destroy the user's
+ *   customization);
+ * - opt-outs from PineVIM config (ui.enabled, ui.motion, ui.glyphs).
+ */
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+  Theme,
+} from "@earendil-works/pi-coding-agent";
+import { glyphs, WORK_FRAMES_ASCII, WORK_FRAMES_UNICODE } from "./glyphs.js";
+import {
+  contextPercent,
+  initialLifecycle,
+  lifecycle,
+  type LifecycleState,
+} from "./lifecycle.js";
+import { telemetryLine as telemetryLineOf } from "./lifecycle.js";
+import { applyTheme, isPinevimThemeName } from "./theme.js";
+import { titleBrand } from "./logo.js";
+import { headerFactory } from "./components/header.js";
+import { deckFactory, type DeckInfo } from "./components/deck.js";
+import { bandFactory, type BandInfo } from "./components/band.js";
+import {
+  TURN_SUMMARY_TYPE,
+  turnSummaryRenderer,
+  type TurnSummaryData,
+} from "./renderers/turnSummary.js";
+import type { UiConfig } from "../config.js";
+
+/** Hook probe result used by the compatibility gate. */
+export interface PiUiHooks {
+  hasSetHeader: boolean;
+  hasSetFooter: boolean;
+  hasSetWidget: boolean;
+  hasWorkingIndicator: boolean;
+  hasEntryRenderer: boolean;
+  hasAppendEntry: boolean;
+}
+
+/** Compile-time-ish runtime gate for the pinned Pi version. */
+export function probeHooks(pi: ExtensionAPI, ctx: ExtensionContext): PiUiHooks {
+  return {
+    hasSetHeader: typeof ctx.ui.setHeader === "function",
+    hasSetFooter: typeof ctx.ui.setFooter === "function",
+    hasSetWidget: typeof ctx.ui.setWidget === "function",
+    hasWorkingIndicator: typeof ctx.ui.setWorkingIndicator === "function",
+    hasEntryRenderer: typeof pi.registerEntryRenderer === "function",
+    hasAppendEntry: typeof pi.appendEntry === "function",
+  };
+}
+
+export function hooksSatisfied(h: PiUiHooks): boolean {
+  return (
+    h.hasSetHeader &&
+    h.hasSetFooter &&
+    h.hasSetWidget &&
+    h.hasWorkingIndicator &&
+    h.hasEntryRenderer &&
+    h.hasAppendEntry
+  );
+}
+
+const BAND_KEY = "pinevim";
+
+export class PiUi {
+  private g = glyphs("unicode");
+  private state: LifecycleState = initialLifecycle();
+  private header: ReturnType<typeof headerFactory> | null = null;
+  private deck: ReturnType<typeof deckFactory> | null = null;
+  private band: ReturnType<typeof bandFactory> | null = null;
+  private mode: "CHAT" | "IDE" =
+    process.env.PINEVIM_IDE === "1" ? "IDE" : "CHAT";
+  private turnStart: { index: number | null; at: number } = {
+    index: null,
+    at: 0,
+  };
+  private unsubs: (() => void)[] = [];
+  private lastCtxPercent: number | null = null;
+  private disposed = false;
+  /** Cached live TUI from the first factory invocation. */
+  private tui: Parameters<typeof headerFactory>[0] | null = null;
+  /** Abort listener for the current turn's signal, if any. */
+  private abortSignal: AbortSignal | null = null;
+
+  constructor(
+    private pi: ExtensionAPI,
+    private ctx: ExtensionContext,
+    /** Active theme; components re-capture it from their factory args. */
+    theme: Theme,
+    private ui: UiConfig,
+  ) {
+    void theme;
+  }
+
+  /** True once any factory has handed us the live TUI (test/gate hook). */
+  get tuiAttached(): boolean {
+    return this.tui !== null;
+  }
+
+  install(): void {
+    const ctx = this.ctx;
+    const ui = ctx.ui;
+    // Non-TUI modes (rpc/print/json) have TUI-bound factories on the type but
+    // no interactive session driving them; the mode guard is the supported check.
+    if (ctx.mode !== "tui") return;
+    this.g = glyphs(this.ui.glyphs);
+
+    // Event wiring is synchronous so lifecycle telemetry starts immediately;
+    // components may not exist yet (frame installs deferred below) and
+    // refresh() no-ops on missing components.
+    this.wireEvents();
+    // Persisted turn-summary renderer (plan §20) — API-level, not chrome, so
+    // it registers synchronously.
+    this.pi.registerEntryRenderer<TurnSummaryData>(
+      TURN_SUMMARY_TYPE,
+      turnSummaryRenderer(this.g) as never,
+    );
+
+    // Frame registration is deferred past Pi's startup sequence: verified via
+    // a minimal-extension probe that setHeader/setFooter registered
+    // synchronously inside session_start are clobbered by the remainder of
+    // InteractiveMode.init(), while a setImmediate registration sticks. The
+    // widget band survives either way (map-backed), but everything installs
+    // together so chrome appears atomically.
+    setImmediate(() => {
+      if (this.disposed) return;
+
+      // Motion: static frame when reduced motion is configured.
+      if (this.ui.motion === "off") {
+        ui.setWorkingIndicator({ frames: [this.g.running], intervalMs: 1000 });
+      } else {
+        const frames =
+          this.ui.glyphs === "ascii"
+            ? [...WORK_FRAMES_ASCII]
+            : [...WORK_FRAMES_UNICODE];
+        ui.setWorkingIndicator({ frames, intervalMs: 120 });
+      }
+
+      // Header: lazy factory — Pi calls it synchronously with the live TUI.
+      ui.setHeader((tui, theme) => {
+        this.tui = tui;
+        if (!this.header) {
+          this.header = headerFactory(
+            tui,
+            theme,
+            this.g,
+            {
+              workspace: workspaceDisplay(ctx.cwd),
+              sessionName: this.pi.getSessionName?.() ?? null,
+              mode: this.mode,
+              lifecycle: this.state,
+            },
+            this.ui.glyphs,
+          );
+        }
+        return this.header;
+      });
+
+      // Status deck: same lazy pattern; the footer data provider arrives here.
+      ui.setFooter((tui, theme, footerData) => {
+        this.tui = tui;
+        if (!this.deck) {
+          this.deck = deckFactory(tui, theme, footerData, this.g, this.deckInfo());
+        }
+        return this.deck;
+      });
+
+      // Chip band above the composer (PineComposer frame, plan §17).
+      ui.setWidget(
+        BAND_KEY,
+        (tui, theme) => {
+          this.tui = tui;
+          if (!this.band) {
+            this.band = bandFactory(tui, theme, this.g, this.bandInfo());
+          }
+          return this.band;
+        },
+        { placement: "aboveEditor" },
+      );
+
+      // (Argument completion is NOT installed here: it uses Pi's native
+      // getArgumentCompletions on registerCommand — see completions.ts —
+      // because a provider wrapper corrupts bare-command input.)
+
+      // Non-persistent PineVIM theme (plan §12) once the frame is in place.
+      // The env value is controller-authored, but the extension reads env
+      // directly, so re-guard before trusting it as a theme name.
+      const themeName = this.ui.theme;
+      if (themeName && themeName !== "auto" && isPinevimThemeName(themeName)) {
+        applyTheme(ui, themeName);
+      }
+
+      // Brand the terminal title (replaces Pi's "π - …" prefix). Best-effort:
+      // non-TUI contexts and embedding hosts may not implement setTitle.
+      try {
+        ui.setTitle?.(titleBrand(this.ui.glyphs));
+      } catch {
+        /* title branding is cosmetic; never fail the install for it */
+      }
+    });
+  }
+
+  private deckInfo(): DeckInfo {
+    return {
+      lifecycle: this.state,
+      ctxPercent: this.lastCtxPercent,
+      model: this.ctx.model?.name ?? null,
+      thinking: this.ctx.thinkingLevel ?? null,
+      degraded: null,
+      prefix: process.env.PINEVIM_UI_PREFIX || "F12",
+    };
+  }
+
+  private bandInfo(): BandInfo {
+    return {
+      mode: this.mode,
+      lifecycle: this.state,
+      queued: this.ctx.hasPendingMessages() ? 1 : 0,
+      ctxPercent: this.lastCtxPercent,
+      model: this.ctx.model?.name ?? null,
+      thinking: this.ctx.thinkingLevel ?? null,
+      prefix: process.env.PINEVIM_UI_PREFIX || "F12",
+    };
+  }
+
+  private refresh(): void {
+    if (this.disposed) return;
+    this.lastCtxPercent = contextPercent(this.ctx);
+    this.header?.update({
+      workspace: workspaceDisplay(this.ctx.cwd),
+      sessionName: this.pi.getSessionName?.() ?? null,
+      mode: this.mode,
+      lifecycle: this.state,
+    });
+    this.deck?.update(this.deckInfo());
+    this.band?.update(this.bandInfo());
+  }
+
+  private wireEvents(): void {
+    const pi = this.pi;
+    this.unsubs.push(
+      pi.on("turn_start", (e, ctx) => {
+        this.state = lifecycle.turnStart(
+          this.state,
+          typeof (e as { turnIndex?: number }).turnIndex === "number"
+            ? (e as { turnIndex: number }).turnIndex
+            : (this.state.turnIndex ?? 0) + 1,
+        );
+        this.turnStart = { index: this.state.turnIndex, at: Date.now() };
+        this.ctx = ctx;
+        this.watchAbort(ctx);
+        this.refresh();
+      }),
+    );
+    this.unsubs.push(
+      pi.on("message_update", (e, ctx) => {
+        this.ctx = ctx;
+        this.state = lifecycle.messageUpdate(this.state, e);
+        this.refresh();
+      }),
+    );
+    this.unsubs.push(
+      pi.on("tool_execution_start", (e, _ctx) => {
+        this.state = lifecycle.toolStart(this.state, e);
+        this.refresh();
+      }),
+    );
+    this.unsubs.push(
+      pi.on("tool_execution_end", (e, _ctx) => {
+        this.state = lifecycle.toolEnd(this.state, e);
+        this.refresh();
+      }),
+    );
+    this.unsubs.push(
+      pi.on("ui_prompt_start", (e, _ctx) => {
+        this.state = lifecycle.waiting(this.state, e);
+        this.refresh();
+      }),
+    );
+    this.unsubs.push(
+      pi.on("ui_prompt_end", (e, _ctx) => {
+        this.state = lifecycle.promptEnd(this.state, e);
+        this.refresh();
+      }),
+    );
+    this.unsubs.push(
+      pi.on("session_before_compact", (e, _ctx) => {
+        this.state = lifecycle.compacting(this.state, e);
+        this.refresh();
+      }),
+    );
+    this.unsubs.push(
+      pi.on("session_compact", (_e, _ctx) => {
+        this.state = { ...this.state, lifecycle: "streaming" };
+        this.refresh();
+      }),
+    );
+    this.unsubs.push(
+      pi.on("turn_end", (e, ctx) => {
+        this.state = lifecycle.turnEnd(this.state, e);
+        // Persisted anchor (plan §8.4): elapsed from turn_start, ctx at end.
+        // Pi signals interruption via stopReason "aborted" on the final message
+        // (agent-session.js maps it to outcome "aborted").
+        const message = e.message as { stopReason?: string } | undefined;
+        const interrupted =
+          message?.stopReason === "aborted" || this.state.aborted;
+        const seconds =
+          this.turnStart.at > 0
+            ? Math.max(0, (Date.now() - this.turnStart.at) / 1000)
+            : null;
+        const data: TurnSummaryData = {
+          turn: e.turnIndex ?? null,
+          seconds,
+          tools: this.state.toolsRun,
+          failed: this.state.toolsFailed,
+          interrupted,
+          ctxPercent: contextPercent(ctx),
+        };
+        pi.appendEntry<TurnSummaryData>(TURN_SUMMARY_TYPE, data);
+        this.ctx = ctx;
+        this.refresh();
+      }),
+    );
+    this.unsubs.push(
+      pi.on("agent_settled", (_e, ctx) => {
+        this.state = lifecycle.settled(this.state);
+        this.ctx = ctx;
+        this.refresh();
+      }),
+    );
+    this.unsubs.push(
+      pi.on("session_info_changed", (_e, ctx) => {
+        this.ctx = ctx;
+        this.refresh();
+      }),
+    );
+    this.unsubs.push(
+      pi.on("model_select", (_e, ctx) => {
+        this.ctx = ctx;
+        this.refresh();
+      }),
+    );
+    this.unsubs.push(
+      pi.on("thinking_level_select", (_e, ctx) => {
+        this.ctx = ctx;
+        this.refresh();
+      }),
+    );
+  }
+
+  /**
+   * Attach the abort listener to the current turn's signal. ctx.signal is
+   * per-turn (undefined between turns), so it is re-watched on every
+   * turn_start rather than cached at install time.
+   */
+  private watchAbort(ctx: ExtensionContext): void {
+    if (this.abortSignal) {
+      this.abortSignal.removeEventListener("abort", this.onAbort);
+      this.abortSignal = null;
+    }
+    const signal = ctx.signal;
+    if (!signal) return;
+    this.abortSignal = signal;
+    signal.addEventListener("abort", this.onAbort, { once: true });
+  }
+
+  private onAbort = (): void => {
+    if (this.disposed) return;
+    this.state = lifecycle.aborted(this.state);
+    this.refresh();
+  };
+
+  /** View transition feedback from successful controller intents. */
+  setMode(mode: "CHAT" | "IDE"): void {
+    this.mode = mode;
+    this.refresh();
+  }
+
+  /** Controller-visible telemetry line for the bridge status report. */
+  telemetryLine(): string {
+    return telemetryLineOf(this.state, this.lastCtxPercent);
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    if (this.abortSignal) {
+      this.abortSignal.removeEventListener("abort", this.onAbort);
+      this.abortSignal = null;
+    }
+    for (const unsub of this.unsubs.splice(0)) {
+      try {
+        unsub();
+      } catch {
+        /* teardown is best-effort; Pi's own unbind path also removes handlers */
+      }
+    }
+  }
+}
+
+function workspaceDisplay(cwd: string): string {
+  const home = process.env.HOME;
+  if (home && cwd.startsWith(home)) return `~${cwd.slice(home.length)}`;
+  return cwd;
+}

@@ -20,8 +20,9 @@
     "Docs/Implementation-Evidence.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/copy-themes.mjs dist/piui/themes && mkdir -p build/src && node scripts/copy-themes.mjs build/src/piui/themes",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
+    "copy:themes": "node scripts/copy-themes.mjs dist/piui/themes && mkdir -p build/src && node scripts/copy-themes.mjs build/src/piui/themes",
     "lint": "eslint src tests --max-warnings 0",
     "format": "prettier --write src tests scripts/*.mjs package.json tsconfig*.json eslint.config.js Docs/Compatibility.md Docs/Testing.md Docs/Implementation-Evidence.md README.md",
     "format:check": "prettier --check src tests scripts/*.mjs package.json tsconfig*.json eslint.config.js Docs/Compatibility.md Docs/Testing.md Docs/Implementation-Evidence.md README.md",
@@ -35,6 +36,7 @@
   "devDependencies": {
     "@earendil-works/pi-ai": "0.87.1",
     "@earendil-works/pi-coding-agent": "0.87.1",
+    "@earendil-works/pi-tui": "0.87.1",
     "@eslint/js": "10.0.1",
     "@types/node": "26.6.2",
     "eslint": "10.11.0",

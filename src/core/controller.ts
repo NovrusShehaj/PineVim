@@ -1,10 +1,21 @@
 import { randomUUID } from "node:crypto";
 import { open, unlink, rmdir } from "node:fs/promises";
 import { constants } from "node:fs";
-import { join, basename } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Tmux, type Pane } from "../adapters/tmux/client.js";
 import { Coalescer } from "../adapters/tmux/events.js";
+import {
+  statusOptionValue,
+  type AgentTelemetry,
+} from "../adapters/tmux/statusline.js";
+import {
+  helpPanelLines,
+  statusPanelLines,
+  menuEntries,
+  isPanelAction,
+} from "../adapters/tmux/panels.js";
+import { parseTelemetryLine } from "../piui/lifecycle.js";
 import { piCommand } from "../adapters/pi/adapter.js";
 import { ControlServer, type ClientIdentity } from "../control/server.js";
 import {
@@ -60,6 +71,8 @@ export class AppController {
   private lastStatus = "";
   private stopped = false;
   private slash = { ide: false, pinevim: false };
+  /** Decoded bridge telemetry; null when the bridge is down. */
+  private telemetry: AgentTelemetry | null = null;
   onStop: (message: string) => void = () => {};
   constructor(
     readonly config: Config,
@@ -123,6 +136,7 @@ export class AppController {
           this.state.geometry.rows,
           piCommand(this.piPath, picker ? "picker" : undefined),
           this.metadata.instance,
+          this.uiEnvironment(),
         );
         this.metadata.session = pane.session;
         this.metadata.window = pane.window;
@@ -280,6 +294,10 @@ export class AppController {
       typeof p.sessionFile === "string" ? p.sessionFile : null;
     this.state.busy = Boolean(p.busy);
     this.slash = { ide: p.ide === true, pinevim: p.pinevim === true };
+    // Additive telemetry (v1.1): a malformed line simply means "no telemetry";
+    // the controller falls back to the busy bit for the status line.
+    this.telemetry =
+      typeof p.telemetry === "string" ? parseTelemetryLine(p.telemetry) : null;
   }
   intent(intent: Intent): Promise<Record<string, unknown>> {
     return this.enqueue(() => this.dispatch(intent));
@@ -294,11 +312,24 @@ export class AppController {
     try {
       await this.reconcile(intent === "reconcile");
       if (this.stopped) return {};
-      if (intent === "status") return { message: this.status() };
-      if (intent === "help") {
-        const message = `${this.config.prefix} then i IDE, c chat, a hide/show, Tab focus, arrows width, r retry, q quit, ? help; double prefix sends literal. /ide close hides a running editor; quit Neovim normally before PineVim quit.`;
-        await this.tmux.notify(message);
-        return { message };
+      if (intent === "status" || intent === "help") {
+        // Panels replace the legacy one-line help/status toasts (plan §24-25);
+        // the intent still returns the legacy message so slash replies keep
+        // carrying collision/recovery text that tests and users rely on.
+        await this.showPanel(intent === "help" ? "help" : "status");
+        return {
+          message:
+            intent === "help"
+              ? "PineVim keys shown in a popup."
+              : this.status(),
+        };
+      }
+      if (
+        isPanelAction(intent) &&
+        (intent === "menu" || intent === "status" || intent === "help")
+      ) {
+        if (intent === "menu") await this.showMenu();
+        return {};
       }
       if (intent === "quit") {
         await this.quit(false);
@@ -379,7 +410,7 @@ export class AppController {
       await this.reconcile(false).catch(() => {});
       await this.apply(this.state).catch(() => {});
       await this.persist().catch(() => {});
-      await this.tmux.notify(safeError(e)).catch(() => {});
+      await this.tmux.notify(safeError(e), "error").catch(() => {});
       await this.logger
         .write({
           event: "failure",
@@ -406,6 +437,7 @@ export class AppController {
     )
       await this.tmux.notify(
         `Editor exited (${this.state.editor.signal ?? this.state.editor.exitCode}). Pi is preserved; /ide starts a new editor.`,
+        "warning",
       );
     const geometry = await this.tmux.dimensions();
     const resized =
@@ -522,29 +554,73 @@ export class AppController {
   }
   private async renderStatus(): Promise<void> {
     const s = this.state;
-    const mode = {
-      CHAT_ONLY: "CHAT",
-      IDE_WITH_AGENT: "IDE",
-      IDE_FOCUS: "FOCUS",
-    }[s.mode];
-    const agent = !s.agent?.alive
-      ? "Pi dead"
-      : !s.bridge
-        ? "disconnected"
-        : s.busy
-          ? "running"
-          : "idle";
-    const hint = tooSmall(s.geometry)
-      ? "resize 60x16"
-      : s.mode === "CHAT_ONLY" && s.editor?.alive
-        ? "editor running, hidden"
-        : s.compact && s.mode === "IDE_WITH_AGENT"
-          ? "Tab switches"
-          : "";
-    const text = `${basename(this.metadata.display).slice(0, 16)} | ${mode} ${s.focus} ${agent} | ${this.config.prefix} ?${hint ? " | " + hint : ""}`;
-    if (text !== this.lastStatus) {
-      await this.tmux.status(text);
-      this.lastStatus = text;
+    const styled = statusOptionValue({
+      state: s,
+      workspace: this.metadata.display,
+      prefix: this.config.prefix,
+      telemetry: s.bridge ? this.telemetry : null,
+      ascii: process.env.PINEVIM_UI_GLYPHS === "ascii",
+    });
+    if (styled !== this.lastStatus) {
+      await this.tmux.status(styled);
+      this.lastStatus = styled;
+    }
+  }
+
+  /** Environment flags for the Pi child: UI config + IDE view marker. */
+  private uiEnvironment(): Record<string, string> {
+    const env: Record<string, string> = {
+      PINEVIM_UI_PREFIX: this.config.prefix,
+      PINEVIM_UI: this.config.ui.enabled ? "1" : "0",
+      PINEVIM_UI_MOTION: this.config.ui.motion,
+      PINEVIM_UI_GLYPHS: this.config.ui.glyphs,
+      PINEVIM_UI_THEME: this.config.ui.theme,
+      // Spawn-time view snapshot for the in-pane header (resumed workspaces
+      // start in their persisted mode); live updates arrive via intents.
+      PINEVIM_IDE: this.state.mode === "CHAT_ONLY" ? "0" : "1",
+    };
+    return env;
+  }
+
+  /** Prefix-driven context menu: same intents, discoverable surface. */
+  private async showMenu(): Promise<void> {
+    const entries = menuEntries(this.config.prefix);
+    try {
+      await this.tmux.menu(
+        entries.map((e) => ({ name: e.label, value: e.intent })),
+      );
+    } catch {
+      await this.tmux.notify(
+        `Menu unavailable. ${this.config.prefix} ? lists keys; /pinevim help also works.`,
+        "warning",
+      );
+    }
+  }
+
+  /** Show a help/status popup; falls back to a plain toast on failure. */
+  private async showPanel(kind: "help" | "status"): Promise<void> {
+    try {
+      if (kind === "help") {
+        await this.tmux.popup(helpPanelLines(this.config.prefix), 70);
+      } else {
+        const facts = {
+          workspace: this.metadata.display,
+          session: this.state.sessionId,
+          bridge: this.state.bridge,
+          slash: this.slash,
+          versions: this.metadata.versions,
+          editorNote: null as string | null,
+          prefix: this.config.prefix,
+        };
+        await this.tmux.popup(statusPanelLines(this.state, facts), 70);
+      }
+    } catch {
+      // Popup unavailable (older tmux, no client): keep the legacy toast path.
+      const legacy =
+        kind === "help"
+          ? `${this.config.prefix} then i IDE, c chat, a hide/show, Tab focus, arrows width, r retry, q quit, ? help`
+          : this.status();
+      await this.tmux.notify(legacy, "info");
     }
   }
   private async persist(): Promise<void> {
@@ -574,6 +650,7 @@ export class AppController {
       await this.renderStatus();
       await this.tmux.notify(
         "Quit Neovim with :qa or :wqa, then repeat PineVim quit. Modified buffers remain protected.",
+        "warning",
       );
       return;
     }
@@ -618,13 +695,14 @@ export class AppController {
               await this.persist();
               await this.tmux.notify(
                 "Pi shutdown timed out; processes preserved. Wait for Pi to settle or quit it normally.",
+                "warning",
               );
             }
           }).catch(() => {});
         }, 10000);
       })
         .catch((e) => {
-          void this.tmux.notify(safeError(e)).catch(() => {});
+          void this.tmux.notify(safeError(e), "error").catch(() => {});
         })
         .finally(() => {
           this.quitPending = false;

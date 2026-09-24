@@ -83,15 +83,27 @@ Optional configuration: `${XDG_CONFIG_HOME:-~/.config}/pinevim/config.json`. Not
 {
   "prefix": "F12",
   "agentRatio": 0.35,
-  "logLevel": "off"
+  "logLevel": "off",
+  "ui": {
+    "enabled": true,
+    "motion": "on",
+    "glyphs": "unicode",
+    "theme": "auto"
+  }
 }
 ```
 
-`pi`, `nvim`, and `tmux` may be absolute executable paths. Executable shell expressions, unknown fields, and provider settings are rejected. Supported prefix forms include F1–F24, a lowercase letter, `C-letter`, `M-letter`, and `C-Space`. Invalid tmux configuration fails locally. `PINEVIM_LOG_LEVEL=debug` overrides the config's log level. No executable project config is supported.
+`pi`, `nvim`, and `tmux` may be absolute executable paths. Executable shell expressions, unknown fields, and provider settings are rejected. Supported prefix forms include F1–F24, a lowercase letter, `C-letter`, `M-letter`, and `C-Space`. Invalid tmux configuration fails locally. `PINEVIM_LOG_LEVEL=debug` overrides the config's log level. No executable project config is supported. The `ui` section controls the in-pane PineVIM frame: `enabled` (master switch), `motion` (`off` replaces the animated working indicator with a static glyph), `glyphs` (`ascii` forces the ASCII fallback vocabulary for all PineVIM chrome), and `theme` (`auto` follows the terminal's color mode; `pinevim-dark`, `pinevim-light`, `pinevim-mono` pin a PineVIM theme; applied per-session, never persisted to Pi settings).
 
 State and opt-in logs live under `${XDG_STATE_HOME:-~/.local/state}/pinevim/`. Runtime sockets live in a private directory under a validated `XDG_RUNTIME_DIR` or the OS temporary directory, with a short-path fallback. State files and IPC token files are private. Logs contain allowlisted controller events, rotate at 5 MiB with three archives, and are never uploaded.
 
-PineVim launches the installed Pi with an explicit bundled extension. It does not read `auth.json`, copy credentials, source `.env`, replace Pi's custom editor/header/footer, disable user extensions, or autoapprove project resources. **Pi and its extensions still perform their normal writes**, including sessions, settings, OAuth refresh, and catalogs. PineVim does not promise immutable Pi storage.
+PineVim launches the installed Pi with an explicit bundled extension. It does not read `auth.json`, copy credentials, source `.env`, disable user extensions, or autoapprove project resources. **Pi and its extensions still perform their normal writes**, including sessions, settings, OAuth refresh, and catalogs. PineVim does not promise immutable Pi storage.
+
+### PineVim workspace UI (bundled extension)
+
+The bundled extension installs the PineVIM frame inside the Pi pane through Pi's public extension API: PineVIM header, status deck, chip band above the composer, lifecycle working indicator, turn-summary entries, `/ide` and `/pinevim` argument completion, and non-persistent PineVIM themes (`pinevim-dark`, `pinevim-light`, `pinevim-mono` — selectable via Pi's `/settings` → Theme picker, which lists them alongside Pi's built-in and custom themes, or pinned via `ui.theme` in PineVim config; Pi 0.87.1 has no `/theme` slash command, so typing `/theme` sends a chat message instead; application never writes Pi's settings.json). This is an intentional amendment of the earlier "does not replace Pi's editor/header/footer" contract: the frame chrome is PineVIM-owned; Pi keeps everything inside it — editing semantics, Markdown, model/session dialogs, tool execution, keybindings.
+
+Conflict behavior: if another extension has already installed a custom editor, PineVIM's UI stands down with a one-time notice and the pane runs stock Pi. If the pinned Pi version lacks required hooks, the UI also disables with a notice rather than degrading the chat. The composer keeps Pi's editor engine and full keybinding surface; `ui.enabled: false` removes all PineVIM chrome (the tmux control plane and prefix keys are independent of it and keep working).
 
 Neovim starts normally in the workspace with `PINEVIM=1`. An intentional `NVIM_APPNAME` is preserved. Inherited remote-editor markers are removed for the editor child. PineVim installs no global plugin and uses no Neovim RPC. Normal user plugin startup can have its own side effects; PineVim does not run plugin installation/sync commands.
 
