@@ -259,11 +259,15 @@ function M.arm()
   -- the autocmd group so that even if lualine later overrides, the
   -- themed colors persist as the floor (highlight precedence).
   if vim.g.pinevim_chrome ~= false then
-    vim.cmd([[ set statusline^=%{&modified?'\ %*\ ':'\ \ \ '}\ ]])
-    vim.cmd([[ set statusline+=%#PinevimStatusBrand#\ %{get(g:,'pinevim_wordmark','pinevim')}\ \ ]])
-    vim.cmd([[ set statusline+=%#StatusLine#\ %f\ \ ]])
-    vim.cmd([[ set statusline+=%#PinevimStatusMuted#\ %{get(g:,'pinevim_agent_lifecycle','offline')}\ \ \ ]])
-    vim.cmd([[ set statusline+=%#StatusLineNC#\ %l:%c\ \ \ ]])
+    -- Build the statusline by appending segments; avoids the need to escape
+    -- whitespace inside vim.cmd(...) long-bracket strings (Lua accepts spaces
+    -- in the value verbatim when passed to set statusline).
+    local function statusline_segment(s) return " " .. s .. " " end
+    vim.opt.statusline:append("%{&modified?' \u25cf ':'   '}")
+    vim.opt.statusline:append("%#PinevimStatusBrand#" .. statusline_segment(vim.g.pinevim_wordmark or "pinevim"))
+    vim.opt.statusline:append("%#StatusLine# %f ")
+    vim.opt.statusline:append("%#PinevimStatusMuted# " .. statusline_segment(vim.g.pinevim_agent_lifecycle or "offline"))
+    vim.opt.statusline:append("%#StatusLineNC# %l:%c ")
   end
 
   local group = vim.api.nvim_create_augroup("PinevimTheme", { clear = true })
