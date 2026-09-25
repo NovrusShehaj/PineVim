@@ -172,7 +172,12 @@ export class AppController {
           "info",
         );
       }
-      await this.tmux.bindings(process.execPath, helper, this.config.prefix);
+      await this.tmux.bindings(
+        process.execPath,
+        helper,
+        this.config.prefix,
+        this.config.ui.glyphs === "ascii",
+      );
       await this.apply(this.state);
       await this.persist();
     });
@@ -250,7 +255,6 @@ export class AppController {
         this.bridgeStatus(m.payload);
         await this.persist();
         await this.renderStatus();
-        await this.pushView();
       }
       return {};
     }
@@ -260,11 +264,13 @@ export class AppController {
     )
       throw new PineError("STALE", "Stale Pi bridge; reconnect.");
     if (m.type === "status" && who.role === "bridge") {
+      const firstStatus = !this.state.bridge;
       this.state.bridge = true;
       if (this.state.agent) this.state.agent.ready = true;
       this.bridgeStatus(m.payload);
       await this.persist();
       await this.renderStatus();
+      if (firstStatus) await this.pushView();
       return {};
     }
     if (m.type === "intent") {
@@ -583,7 +589,7 @@ export class AppController {
       workspace: this.metadata.display,
       prefix: this.config.prefix,
       telemetry: s.bridge ? this.telemetry : null,
-      ascii: process.env.PINEVIM_UI_GLYPHS === "ascii",
+      ascii: this.config.ui.glyphs === "ascii",
     });
     if (styled !== this.lastStatus) {
       await this.tmux.status(styled);
@@ -627,7 +633,7 @@ export class AppController {
 
   /** Show a help/status popup; falls back to a plain toast on failure. */
   private async showPanel(kind: "help" | "status"): Promise<void> {
-    const ascii = process.env.PINEVIM_UI_GLYPHS === "ascii";
+    const ascii = this.config.ui.glyphs === "ascii";
     try {
       if (kind === "help") {
         await this.tmux.popup(

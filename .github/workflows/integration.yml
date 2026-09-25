@@ -1,0 +1,112 @@
+# Release gate: real-environment integration. Pi 0.87.1 comes from the
+# pinned lockfile via npm ci; tmux is built from the documented minimum
+# (>= 3.5) because distro packages lag it; Neovim is pinned to the
+# compatibility target. Unit coverage stays in ci.yml. Do not upload logs.
+name: Integration
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [labeled]
+
+concurrency:
+  group: integration-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TMUX_VERSION: "3.5"
+  NEOVIM_VERSION: "0.12.4"
+
+jobs:
+  linux:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.label.name, 'integration')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Build pinned tmux from source
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y libevent-dev ncurses-dev build-essential bison pkg-config
+          curl -fsSL "https://github.com/tmux/tmux/releases/download/${TMUX_VERSION}/tmux-${TMUX_VERSION}.tar.gz" -o /tmp/tmux.tar.gz
+          tar -xzf /tmp/tmux.tar.gz -C /tmp
+          (cd "/tmp/tmux-${TMUX_VERSION}" && ./configure --prefix=/usr/local)
+          make -C "/tmp/tmux-${TMUX_VERSION}" -j2
+          sudo make -C "/tmp/tmux-${TMUX_VERSION}" install
+          hash -r
+          tmux -V
+      - name: Install pinned Neovim
+        run: |
+          curl -fsSL "https://github.com/neovim/neovim/releases/download/v${NEOVIM_VERSION}/nvim-linux-x86_64.tar.gz" \
+            | sudo tar -xzf - -C /usr/local --strip-components=1
+          nvim --version | head -1
+      - name: Toolchain
+        run: |
+          echo "node $(node --version)"
+          echo "npm $(npm --version)"
+          which tmux && tmux -V
+          which nvim && nvim --version | head -1
+      - name: Integration tests
+        run: npm run test:integration
+      - name: Phase 0 audit
+        run: npm run test:phase0
+      - name: SSH smoke
+        run: |
+          sudo apt-get install -y openssh-server
+          sudo ssh-keygen -A
+          sudo mkdir -p /run/sshd
+          sudo /usr/sbin/sshd
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519 -q
+          cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
+          chmod 600 ~/.ssh/authorized_keys
+          ssh-keyscan -H localhost >> ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+          NODE_DIR="$(dirname "$(command -v node)")"
+          ssh localhost "export PATH=\"${NODE_DIR}:\$PATH\" && cd \"${GITHUB_WORKSPACE}\" && npm run test:package"
+
+  macos:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.label.name, 'integration')
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Install toolchain
+        run: brew install tmux neovim
+      - name: Enforce tmux >= 3.5
+        run: |
+          tmux -V
+          ACTUAL="$(tmux -V | awk '{print $2}')"
+          node -e '
+            const actual = process.argv[1].split(".").map(Number);
+            const min = [3, 5];
+            for (let i = 0; i < Math.max(actual.length, min.length); i++) {
+              const d = (actual[i] || 0) - (min[i] || 0);
+              if (d > 0) process.exit(0);
+              if (d < 0) process.exit(1);
+            }
+          ' "${ACTUAL}" || {
+            echo "tmux ${ACTUAL} is below the documented 3.5 minimum" >&2
+            exit 1
+          }
+      - name: Toolchain
+        run: |
+          echo "node $(node --version)"
+          echo "tmux $(tmux -V)"
+          echo "nvim $(nvim --version | head -1)"
+      - name: Integration tests
+        run: npm run test:integration

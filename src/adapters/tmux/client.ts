@@ -150,7 +150,12 @@ export class Tmux {
         "Private tmux identity mismatch; refusing adoption or cleanup.",
       );
   }
-  async bindings(node: string, helper: string, prefix: string): Promise<void> {
+  async bindings(
+    node: string,
+    helper: string,
+    prefix: string,
+    ascii = false,
+  ): Promise<void> {
     for (const [key, intent] of Object.entries({
       i: "ide.open",
       c: "chat",
@@ -178,13 +183,7 @@ export class Tmux {
       "-T",
       "prefix",
       "m",
-      ...menuDisplayArgv(
-        node,
-        helper,
-        this.runtime,
-        prefix,
-        process.env.PINEVIM_UI_GLYPHS === "ascii",
-      ),
+      ...menuDisplayArgv(node, helper, this.runtime, prefix, ascii),
     );
     for (const [hook, event] of Object.entries({
       "client-resized": "resize",
@@ -347,7 +346,7 @@ export class Tmux {
     const file = join(this.runtime, "popup.txt");
     await mkdir(this.runtime, { recursive: true });
     await writeFile(file, bodyLines.join("\n"), { mode: 0o600 });
-    const height = Math.min(bodyLines.length + 3, 20);
+    const height = bodyLines.length + 3;
     await this.command(
       "display-popup",
       "-E",

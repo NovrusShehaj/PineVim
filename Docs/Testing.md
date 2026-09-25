@@ -18,7 +18,32 @@ npm run benchmark
 
 `npm test` compiles strict TypeScript and runs Node's test runner. Integration tests launch real Pi 0.87.1 and Neovim in fabricated HOME/XDG/Pi directories. A deterministic public provider fixture supplies responses without network/authentication. Tests do not copy personal resources. Normal Neovim production arguments remain unchanged; `--clean -i NONE` appears only in isolated buffer tests. Tests use private unique tmux sockets and clean up only their own fixtures.
 
+Run integration suites through the compiled path (`npm test`,
+`npm run test:integration`, or `npx tsc -p tsconfig.test.json` followed by
+`node --test build/tests/integration/*.test.js`). Running them directly under
+`tsx` makes Pi's `--extension` path resolve to a nonexistent `extension.js`
+next to the TS source, so the agent pane dies instantly and tests surface
+misleading `LAYOUT did not converge` errors instead of the real cause.
+
 `test:phase0` independently tests the installed Pi found on PATH. The attached PTY runner tests the compiled CLI, prefix byte routing, literal prefix, bracketed paste, CSI-u, resizing, process identity and controller crash/resume. The outer tmux in its nested case is an isolated fixture configured for extended keys. This does not certify physical keys, terminal fonts, or clipboard behavior.
+
+Release-focused integration runs on GitHub via the `Integration` workflow
+(`.github/workflows/integration.yml`): manual `workflow_dispatch` or the
+`integration` label. The linux job builds the documented tmux minimum (3.5)
+from source, installs Neovim 0.12.4, runs `test:integration` and
+`test:phase0`, and finishes with an SSH smoke that repackages and exercises
+the CLI over a local sshd. The macos job runs brew-installed tmux/Neovim
+with a hard tmux >= 3.5 version gate. Unit coverage stays in `ci.yml`.
+
+`tests/integration/fault.test.ts` injects lifecycle faults against real
+children: Pi killed mid-stream (record integrity and death detection), Pi
+killed mid-run with the documented resume path adopting a dead agent while a
+live editor is preserved, an editor killed mid-view-switch (Pi survives, a
+replacement editor reopens), a 500-event control IPC flood absorbed without
+wedging intents, and an interrupted controller whose dead-owner lock must be
+reclaimed before resume. Interactive `confirm-before` recovery (prefix-r) is
+excluded: it requires an attached tmux client and stays a manual real-
+environment step.
 
 The package smoke packs a tarball, audits its allowlist, installs into a disposable prefix, and exercises help/version and bundled asset availability. It does not publish or install globally.
 
@@ -54,4 +79,4 @@ Production paths use argument-array process execution. IPC framing, schema, auth
 
 Do not use the default tmux server for testing. A test crash can leave its private server under its reported temporary directory; verify its instance and pane inventory before removing it. Never run an unscoped `tmux kill-server` to clean tests.
 
-See [Implementation Evidence](Implementation-Evidence.md) for requirement-by-requirement results. Missing physical-terminal/platform evidence prevents a production-ready claim.
+See [Implementation Evidence](Implementation-Evidence.md) for requirement-by-requirement results and the [release checklist](Release-Checklist.md) for the full pre-tag gate sequence. Missing physical-terminal/platform evidence prevents a production-ready claim.

@@ -260,12 +260,23 @@ export interface LifecycleTelemetry {
 }
 
 export function telemetry(s: LifecycleState): LifecycleTelemetry {
+  const waitingKind =
+    s.lifecycle === "waiting" ? (s.prompt?.kind ?? null) : null;
   return {
     lifecycle: s.lifecycle,
     toolsRun: s.toolsRun,
     toolsFailed: s.toolsFailed,
     turnIndex: s.turnIndex,
-    waitingKind: s.lifecycle === "waiting" ? (s.prompt?.kind ?? null) : null,
+    waitingKind:
+      waitingKind === null
+        ? null
+        : (() => {
+            const normalized = waitingKind
+              .toLowerCase()
+              .replace(/[^a-z0-9-]+/g, "-")
+              .slice(0, 16);
+            return /[a-z0-9]/.test(normalized) ? normalized : "custom";
+          })(),
   };
 }
 

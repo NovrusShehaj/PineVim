@@ -310,7 +310,12 @@ describe("panels", () => {
   });
   it("menu argv runs helper commands and does not send intent menu", () => {
     const argv = menuDisplayArgv("/usr/bin/node", "/helper.js", "/rt", "F12");
-    assert.ok(argv.some((part) => part.includes("ide.open")));
+    const items = argv.slice(3);
+    assert.equal(items.length % 3, 0);
+    for (let i = 2; i < items.length; i += 3) {
+      assert.match(items[i] ?? "", /^run-shell -b "/);
+      assert.match(items[i] ?? "", /"$/);
+    }
     assert.equal(argv.includes("menu"), false);
     assert.equal(argv.join(" ").includes("read -n"), false);
   });

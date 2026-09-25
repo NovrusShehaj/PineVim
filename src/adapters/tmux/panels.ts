@@ -8,7 +8,7 @@
 import { plain, recoveryCopy } from "../../diagnostics.js";
 import { fit } from "../../piui/glyphs.js";
 import { sgr, type SgrRole } from "./styled.js";
-import { helperCommand } from "./config.js";
+import { helperCommand, tmuxQuote } from "./config.js";
 import type { State } from "../../core/state.js";
 import type { AgentTelemetry } from "./statusline.js";
 
@@ -265,7 +265,7 @@ export function menuDisplayArgv(
     argv.push(
       entry.label,
       entry.key,
-      `run-shell -b ${helperCommand(node, helper, runtime, entry.intent)}`,
+      `run-shell -b ${tmuxQuote(helperCommand(node, helper, runtime, entry.intent))}`,
     );
   }
   return argv;

@@ -100,6 +100,8 @@ export async function harness(columns = 120, rows = 30, provider = false) {
     store,
     tmux,
     metadata,
+    config,
+    piPath: pi,
     get controller() {
       return controller;
     },

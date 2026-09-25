@@ -355,6 +355,14 @@ describe("lifecycle", () => {
     assert.equal(parsed?.turnIndex, 4);
     assert.equal(parsed?.ctxPercent, 42);
   });
+  it("normalizes waiting kinds to bounded protocol tokens", () => {
+    const s = initialLifecycle();
+    s.lifecycle = "waiting";
+    s.prompt = { kind: "Needs/Custom Prompt!" };
+    assert.equal(telemetryLine(s, null), "waiting|0|0|-|needs-custom-pro|-");
+    s.prompt = { kind: "!!!" };
+    assert.equal(telemetryLine(s, null), "waiting|0|0|-|custom|-");
+  });
   it("parse rejects malformed telemetry", () => {
     assert.equal(parseTelemetryLine("bogus"), null);
     assert.equal(parseTelemetryLine("tooling|x|1|1|-|5"), null);
@@ -1152,6 +1160,80 @@ describe("header", () => {
 
   it("suppresses below 60 columns", () => {
     assert.deepEqual(makeWith(59, idle), []);
+  });
+
+  it("pins the 99/100-column boundary on both sides", () => {
+    // 99 columns: the compact mark collapses after the first turn.
+    assert.equal(makeWith(99, active).length, 4);
+    // 100 columns: the full pine persists even after activity.
+    const full = makeWith(100, active);
+    assert.equal(full.length, 11);
+    assert.match(bare(full), /\/\|\|\\/);
+    // Splash behavior is identical on both sides (rows >= 25).
+    assert.equal(makeWith(99, idle).length, 11);
+    assert.equal(makeWith(100, idle).length, 11);
+  });
+
+  it("suppresses below 60 columns in every state and theme family", () => {
+    for (const width of [30, 59]) {
+      for (const lc of [idle, active]) {
+        for (const themeName of ["pinevim-dark", "pinevim-snow"]) {
+          assert.deepEqual(
+            makeWith(width, lc, themeName, 30),
+            [],
+            `expected no header at ${width} columns (${themeName})`,
+          );
+        }
+      }
+    }
+  });
+
+  it("emits zero ANSI escapes when the theme has no color support", () => {
+    const tui = {
+      requestRender: () => {},
+      terminal: { rows: 30 },
+    } as never;
+    const theme = {
+      name: "pinevim-dark",
+      fg: (_role: string, value: string) => value,
+      bold: (value: string) => value,
+      getFgAnsi: () => null,
+    } as never;
+    const info = {
+      workspace: "~/proj",
+      sessionName: null,
+      mode: "CHAT" as const,
+      lifecycle: idle,
+    };
+    const header = headerFactory(tui, theme, g, info);
+    for (const width of [60, 80, 120]) {
+      for (const line of header.render(width)) {
+        assert.ok(
+          !line.includes("\x1b"),
+          `no-color header emitted an escape at ${width}: ${line}`,
+        );
+      }
+    }
+  });
+
+  it("keeps light-theme (snow) compact renders inside width bounds", () => {
+    const compact = makeWith(80, active, "pinevim-snow", 24);
+    assert.equal(compact.length, 4);
+    assert.match(bare(compact), /pinevim/);
+    assert.match(bare(compact), /CHAT/);
+    for (const width of [60, 79, 80, 99, 100, 120]) {
+      for (const rows of [16, 24, 30]) {
+        for (const lc of [idle, active]) {
+          const lines = makeWith(width, lc, "pinevim-snow", rows);
+          for (const line of lines) {
+            assert.ok(
+              [...stripTerminalSequences(line)].length <= width,
+              `snow line exceeds ${width} at ${rows} rows: ${stripTerminalSequences(line)}`,
+            );
+          }
+        }
+      }
+    }
   });
 });
 

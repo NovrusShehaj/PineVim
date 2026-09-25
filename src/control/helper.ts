@@ -12,7 +12,11 @@ if (runtime && action === "popup") {
     if (process.stdin.isTTY) process.stdin.setRawMode(true);
     process.stdin.resume();
     await new Promise<void>((resolve) => {
-      process.stdin.once("data", () => resolve());
+      process.stdin.once("data", () => {
+        if (process.stdin.isTTY) process.stdin.setRawMode(false);
+        process.stdin.pause();
+        resolve();
+      });
     });
   } catch {
     process.exitCode = 1;
