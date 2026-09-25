@@ -1,0 +1,165 @@
+[
+  {
+    "name": "compact 60x16",
+    "file": "header-compact-60x16.txt",
+    "width": 60,
+    "rows": 16,
+    "mode": "unicode",
+    "workspace": "~/proj",
+    "sessionName": null
+  },
+  {
+    "name": "compact 60x16 long identity session omitted",
+    "file": "header-compact-60x16-long-identity.txt",
+    "width": 60,
+    "rows": 16,
+    "mode": "unicode",
+    "workspace": "pinevim-ui-layout-review-workspace",
+    "sessionName": "long-session-name-for-layout-review"
+  },
+  {
+    "name": "compact 60x16 long identity session omitted ASCII",
+    "file": "header-compact-60x16-long-identity-ascii.txt",
+    "width": 60,
+    "rows": 16,
+    "mode": "ascii",
+    "workspace": "pinevim-ui-layout-review-workspace",
+    "sessionName": "long-session-name-for-layout-review"
+  },
+  {
+    "name": "compact 80x24",
+    "file": "header-compact-80x24.txt",
+    "width": 80,
+    "rows": 24,
+    "mode": "unicode",
+    "workspace": "~/proj",
+    "sessionName": null
+  },
+  {
+    "name": "compact 80x24 IDE editor focus",
+    "file": "header-compact-80x24-ide-editor.txt",
+    "width": 80,
+    "rows": 24,
+    "mode": "unicode",
+    "workspace": "~/proj",
+    "sessionName": null,
+    "view": "IDE",
+    "focus": "editor"
+  },
+  {
+    "name": "compact 80x24 IDE editor focus ASCII",
+    "file": "header-compact-80x24-ide-editor-ascii.txt",
+    "width": 80,
+    "rows": 24,
+    "mode": "ascii",
+    "workspace": "~/proj",
+    "sessionName": null,
+    "view": "IDE",
+    "focus": "editor"
+  },
+  {
+    "name": "compact 80x24 IDE without focus",
+    "file": "header-compact-80x24-ide.txt",
+    "width": 80,
+    "rows": 24,
+    "mode": "unicode",
+    "workspace": "~/proj",
+    "sessionName": null,
+    "view": "IDE"
+  },
+  {
+    "name": "compact 80x24 long identity",
+    "file": "header-compact-80x24-long-identity.txt",
+    "width": 80,
+    "rows": 24,
+    "mode": "unicode",
+    "workspace": "pinevim-ui-layout-review-workspace",
+    "sessionName": "long-session-name-for-layout-review"
+  },
+  {
+    "name": "compact 80x24 ASCII",
+    "file": "header-compact-80x24-ascii.txt",
+    "width": 80,
+    "rows": 24,
+    "mode": "ascii",
+    "workspace": "~/proj",
+    "sessionName": null
+  },
+  {
+    "name": "compact 80x24 long identity ASCII",
+    "file": "header-compact-80x24-ascii-long-identity.txt",
+    "width": 80,
+    "rows": 24,
+    "mode": "ascii",
+    "workspace": "pinevim-ui-layout-review-workspace",
+    "sessionName": "long-session-name-for-layout-review"
+  },
+  {
+    "name": "full 120x30",
+    "file": "header-full-120x30.txt",
+    "width": 120,
+    "rows": 30,
+    "mode": "unicode",
+    "workspace": "~/proj",
+    "sessionName": null
+  },
+  {
+    "name": "full 120x30 IDE agent focus",
+    "file": "header-full-120x30-ide-agent.txt",
+    "width": 120,
+    "rows": 30,
+    "mode": "unicode",
+    "workspace": "~/proj",
+    "sessionName": null,
+    "view": "IDE",
+    "focus": "agent"
+  },
+  {
+    "name": "full 120x30 IDE agent focus ASCII",
+    "file": "header-full-120x30-ide-agent-ascii.txt",
+    "width": 120,
+    "rows": 30,
+    "mode": "ascii",
+    "workspace": "~/proj",
+    "sessionName": null,
+    "view": "IDE",
+    "focus": "agent"
+  },
+  {
+    "name": "full 120x30 IDE without focus",
+    "file": "header-full-120x30-ide.txt",
+    "width": 120,
+    "rows": 30,
+    "mode": "unicode",
+    "workspace": "~/proj",
+    "sessionName": null,
+    "view": "IDE"
+  },
+  {
+    "name": "full 120x30 long identity",
+    "file": "header-full-120x30-long-identity.txt",
+    "width": 120,
+    "rows": 30,
+    "mode": "unicode",
+    "workspace": "pinevim-ui-layout-review-workspace",
+    "sessionName": "long-session-name-for-layout-review"
+  },
+  {
+    "name": "full 120x30 ASCII",
+    "file": "header-full-120x30-ascii.txt",
+    "width": 120,
+    "rows": 30,
+    "mode": "ascii",
+    "workspace": "~/proj",
+    "sessionName": null
+  },
+  {
+    "name": "full 120x30 long identity ASCII",
+    "file": "header-full-120x30-ascii-long-identity.txt",
+    "width": 120,
+    "rows": 30,
+    "mode": "ascii",
+    "workspace": "pinevim-ui-layout-review-workspace",
+    "sessionName": "long-session-name-for-layout-review"
+  }
+]

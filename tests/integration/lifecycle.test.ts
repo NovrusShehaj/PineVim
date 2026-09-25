@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { PINE_TREE } from "../../src/piui/logo.js";
 import { harness, until } from "./harness.js";
 
 test(
@@ -156,6 +157,37 @@ for (const [columns, rows] of [
     async () => {
       const h = await harness(columns, rows);
       try {
+        await until(async () => {
+          const frame = await h.tmux.command(
+            "capture-pane",
+            "-p",
+            "-S",
+            "-",
+            "-t",
+            h.controller.state.agent!.pane,
+          );
+          return frame.includes("pinevim") && frame.includes("workspace");
+        });
+        const frame = await h.tmux.command(
+          "capture-pane",
+          "-p",
+          "-S",
+          "-",
+          "-t",
+          h.controller.state.agent!.pane,
+        );
+        const lines = frame.split("\n");
+        const wordmark = lines.find((line) => line.includes("pinevim"))!;
+        const workspace = lines.find((line) => line.includes("workspace"))!;
+        assert.ok(wordmark.length <= columns);
+        assert.ok(workspace.length <= columns);
+        assert.match(wordmark.trimStart(), /^\/\\\s+pinevim/);
+        if (columns === 60) {
+          assert.equal(wordmark, workspace);
+        } else {
+          assert.ok(workspace.trimStart().startsWith("/||\\"));
+        }
+
         const pid = h.controller.state.agent!.pid;
         await h.controller.intent("ide.open");
         assert.equal(h.controller.state.mode, "IDE_WITH_AGENT");
@@ -171,6 +203,82 @@ for (const [columns, rows] of [
       }
     },
   );
+
+test(
+  "live pane resize switches between compact and full splash headers",
+  { timeout: 40000 },
+  async () => {
+    const h = await harness(80, 24);
+    try {
+      const pane = h.controller.state.agent!.pane;
+      const pid = h.controller.state.agent!.pid;
+      const capture = async (): Promise<string[]> => {
+        const frame = await h.tmux.command("capture-pane", "-p", "-t", pane);
+        const first = frame.split("\n").findIndex((line) => line.trim());
+        return first < 0 ? [] : frame.split("\n").slice(first);
+      };
+      const waitForGeometry = async (columns: number, rows: number) => {
+        h.controller.state.geometry = { columns, rows };
+        await h.controller.intent("reconcile");
+        await until(async () => {
+          const agent = (await h.tmux.inventory()).find((p) => p.pane === pane);
+          return agent?.width === columns && agent.height === rows - 1;
+        });
+      };
+      const waitForCompact = async () => {
+        await until(async () => {
+          const lines = await capture();
+          return (
+            lines[0]?.includes("pinevim") === true &&
+            lines[1]?.trimStart().startsWith("/||\\") === true &&
+            lines[2]?.trimStart().startsWith("/_/\\_\\") === true &&
+            lines[3]?.trimStart().startsWith("||") === true
+          );
+        });
+        const lines = await capture();
+        assert.match(lines[0]!.trimStart(), /^\/\\\s+pinevim/);
+        assert.ok(lines[1]!.trimStart().startsWith("/||\\"));
+        assert.ok(lines[2]!.trimStart().startsWith("/_/\\_\\"));
+        assert.ok(lines[3]!.trimStart().startsWith("||"));
+        assert.match(lines[1]!, /workspace/);
+      };
+      const waitForFull = async () => {
+        await until(async () => {
+          const lines = await capture();
+          return PINE_TREE.every((source, index) =>
+            lines[index]?.trimStart().startsWith(source.trim()),
+          );
+        });
+        const lines = await capture();
+        assert.ok(
+          PINE_TREE.every((source, index) =>
+            lines[index]!.trimStart().startsWith(source.trim()),
+          ),
+          "full splash is not intact after resize",
+        );
+        assert.match(lines[1]!, /pinevim/);
+        assert.match(lines[0]!, /view CHAT/);
+      };
+
+      assert.equal(h.controller.state.compact, true);
+      await waitForCompact();
+
+      await waitForGeometry(120, 30);
+      assert.equal(h.controller.state.compact, false);
+      await waitForFull();
+
+      await waitForGeometry(80, 24);
+      assert.equal(h.controller.state.compact, true);
+      await waitForCompact();
+
+      assert.equal(h.controller.state.agent!.pid, pid);
+      assert.equal(h.controller.state.bridge, true);
+    } finally {
+      await h.close();
+    }
+  },
+);
+
 test(
   "safe shutdown retains foreign tmux jobs",
   { timeout: 40000 },

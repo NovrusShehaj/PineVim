@@ -1,0 +1,4 @@
+    /\   pinevim                                                            CHAT
+   /||\  - workspace ~/proj
+  /_/\_\
+    ||

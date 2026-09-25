@@ -63,13 +63,20 @@ export function trunkFactorFor(themeName: string | undefined): number {
   return PINE_TRUNK_FACTOR_OVERRIDES[themeName] ?? PINE_TRUNK_FACTOR;
 }
 
-/** Compact mark (crown, base), 4 cells wide — the collapsed header form. */
-export const TREE_CROWN = " /\\ ";
-export const TREE_BASE = "/||\\";
+/** Compact pine mark, normalized to an 8-cell block for the collapsed header. */
+export const TREE_LINES = [
+  "    /\\",
+  "   /||\\",
+  "  /_/\\_\\",
+  "    ||",
+] as const;
 
-/** The compact logo lines (crown, base), 4 cells wide each. */
-export function treeLines(): readonly [string, string] {
-  return [TREE_CROWN, TREE_BASE];
+/** Visible width of the compact mark. */
+export const TREE_LINES_WIDTH = 8;
+
+/** Padded compact logo rows, ready to place beside identity text. */
+export function treeLines(): readonly string[] {
+  return TREE_LINES.map((line) => line.padEnd(TREE_LINES_WIDTH));
 }
 
 /** Terminal title prefix (pure ASCII — window chrome fonts vary). */

@@ -35,12 +35,25 @@ import {
   PINE_TRUNK_FACTOR_OVERRIDES,
   PINE_TREE,
   PINE_TREE_WIDTH,
+  TREE_LINES_WIDTH,
   shadeFgAnsi,
   titleBrand,
   treeLines,
   trunkFactorFor,
 } from "../../src/piui/logo.js";
-import { headerFactory } from "../../src/piui/components/header.js";
+import {
+  headerFactory,
+  MIN_FULL_SPLASH_ROWS,
+} from "../../src/piui/components/header.js";
+import { bandFactory } from "../../src/piui/components/band.js";
+import { deckFactory } from "../../src/piui/components/deck.js";
+import {
+  renderRunLine,
+  runSummaryRenderer,
+  welcomeRenderer,
+  WELCOME_TYPE,
+} from "../../src/piui/renderers/runLedger.js";
+import { style, strong, surface } from "../../src/piui/style.js";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import {
   PINEVIM_THEMES,
@@ -55,6 +68,7 @@ import {
   TURN_SUMMARY_TYPE,
 } from "../../src/piui/renderers/turnSummary.js";
 import { readdirSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   toolStateGlyph,
   toolStateRole,
@@ -93,6 +107,8 @@ describe("glyphs", () => {
     assert.equal(fit("hello", 10), "hello");
     assert.equal(fit("", 3), "");
     assert.equal(fit("abc", 0), "");
+    assert.equal(fit("abcdef", 5, "..."), "ab...");
+    assert.equal([...fit("abcdef", 2, "...")].length, 2);
     // surrogate pair: emoji is one code point
     assert.equal([...fit("a😀b", 2)].length, 2);
   });
@@ -643,11 +659,14 @@ describe("logo", () => {
       "PINE_TREE_WIDTH must equal the widest line",
     );
   });
-  it("compact mark: crown and base share the same cell width", () => {
-    const [crown, base] = treeLines();
-    assert.equal(crown.length, base.length);
-    assert.ok(crown.includes("/"));
-    assert.ok(base.includes("|"));
+  it("compact mark uses the four-line miniature pine", () => {
+    const lines = treeLines();
+    assert.equal(lines.length, 4);
+    assert.deepEqual(
+      lines.map((line) => line.trimEnd()),
+      ["    /\\", "   /||\\", "  /_/\\_\\", "    ||"],
+    );
+    assert.ok(lines.every((line) => line.length === TREE_LINES_WIDTH));
   });
   it("trunkFactorFor: default for unknown/unnamed themes, per-theme overrides", () => {
     assert.equal(trunkFactorFor(undefined), trunkFactorFor("pinevim-dark"));
@@ -684,9 +703,108 @@ describe("logo", () => {
 });
 
 describe("header", () => {
+  interface HeaderSnapshot {
+    name: string;
+    file: string;
+    width: number;
+    rows: number;
+    mode: "unicode" | "ascii";
+    workspace: string;
+    sessionName: string | null;
+    view?: "CHAT" | "IDE";
+    focus?: "agent" | "editor" | null;
+  }
+  const snapshotFields = new Set([
+    "name",
+    "file",
+    "width",
+    "rows",
+    "mode",
+    "workspace",
+    "sessionName",
+    "view",
+    "focus",
+  ]);
+  function parseHeaderSnapshots(value: unknown): HeaderSnapshot[] {
+    if (!Array.isArray(value) || value.length === 0) {
+      throw new Error("Header snapshot manifest must be a non-empty array.");
+    }
+    const files = new Set<string>();
+    return value.map((entry, index) => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+        throw new Error(`Header snapshot ${index} must be an object.`);
+      }
+      const snapshot = entry as Record<string, unknown>;
+      const unknownField = Object.keys(snapshot).find(
+        (field) => !snapshotFields.has(field),
+      );
+      if (unknownField) {
+        throw new Error(
+          `Header snapshot ${index} has unknown field ${unknownField}.`,
+        );
+      }
+      const {
+        name,
+        file,
+        width,
+        rows,
+        mode,
+        workspace,
+        sessionName,
+        view,
+        focus,
+      } = snapshot;
+      if (
+        typeof name !== "string" ||
+        name.length === 0 ||
+        typeof file !== "string" ||
+        !/^header-[a-z0-9-]+\.txt$/.test(file) ||
+        typeof width !== "number" ||
+        !Number.isSafeInteger(width) ||
+        width < 1 ||
+        typeof rows !== "number" ||
+        !Number.isSafeInteger(rows) ||
+        rows < 1 ||
+        !["unicode", "ascii"].includes(mode as string) ||
+        typeof workspace !== "string" ||
+        (sessionName !== null && typeof sessionName !== "string") ||
+        (view !== undefined && !["CHAT", "IDE"].includes(view as string)) ||
+        (focus !== undefined &&
+          focus !== null &&
+          !["agent", "editor"].includes(focus as string)) ||
+        (focus !== undefined && focus !== null && view !== "IDE")
+      ) {
+        throw new Error(`Header snapshot ${index} has an invalid shape.`);
+      }
+      if (files.has(file)) {
+        throw new Error(`Header snapshot manifest repeats ${file}.`);
+      }
+      files.add(file);
+      return {
+        name,
+        file,
+        width: width as number,
+        rows: rows as number,
+        mode: mode as HeaderSnapshot["mode"],
+        workspace,
+        sessionName,
+        ...(view === undefined
+          ? {}
+          : { view: view as NonNullable<HeaderSnapshot["view"]> }),
+        ...(focus === undefined
+          ? {}
+          : { focus: focus as NonNullable<HeaderSnapshot["focus"]> }),
+      };
+    });
+  }
+
   const g = glyphs("unicode");
   const idle: LifecycleState = initialLifecycle();
   const active: LifecycleState = { ...idle, lifecycle: "streaming" };
+  const snapshotFixtureDir = resolve("tests/fixtures");
+  const headerSnapshotManifest: unknown = JSON.parse(
+    readFileSync(resolve(snapshotFixtureDir, "header-snapshots.json"), "utf8"),
+  );
   // Realistic accent styling: Theme.fg wraps text in the resolved SGR code
   // (a pass-through stub would hide the canopy's ANSI from assertions).
   const ACCENT = "\x1b[38;2;61;255;160m";
@@ -694,8 +812,13 @@ describe("header", () => {
     width: number,
     lifecycle: LifecycleState,
     themeName = "pinevim-dark",
+    rows = 30,
+    glyphSet = g,
+    identity: { workspace?: string; sessionName?: string | null } = {},
+    view: "CHAT" | "IDE" = "CHAT",
+    focus: "agent" | "editor" | null = null,
   ) => {
-    const tui = { requestRender: () => {} } as never;
+    const tui = { requestRender: () => {}, terminal: { rows } } as never;
     const theme = {
       name: themeName,
       fg: (role: string, s: string) =>
@@ -704,13 +827,28 @@ describe("header", () => {
       getFgAnsi: (_role: string) => ACCENT,
     } as never;
     const info = {
-      workspace: "~/proj",
-      sessionName: null,
-      mode: "CHAT" as const,
+      workspace: identity.workspace ?? "~/proj",
+      sessionName: identity.sessionName ?? null,
+      mode: view,
+      ...(focus ? { focus } : {}),
       lifecycle,
     };
-    return headerFactory(tui, theme, g, info).render(width);
+    return headerFactory(tui, theme, glyphSet, info).render(width);
   };
+  const renderSnapshot = (snapshot: HeaderSnapshot): string[] =>
+    makeWith(
+      snapshot.width,
+      idle,
+      "pinevim-dark",
+      snapshot.rows,
+      glyphs(snapshot.mode),
+      {
+        workspace: snapshot.workspace,
+        sessionName: snapshot.sessionName,
+      },
+      snapshot.view ?? "CHAT",
+      snapshot.focus ?? null,
+    );
 
   it("two-tone pine: canopy in accent, trunk in the darker same-hue shade", () => {
     const lines = makeWith(120, idle);
@@ -731,7 +869,10 @@ describe("header", () => {
   });
 
   it("two-tone degrades to single-tone without truecolor", () => {
-    const tui = { requestRender: () => {} } as never;
+    const tui = {
+      requestRender: () => {},
+      terminal: { rows: 30 },
+    } as never;
     const theme = {
       fg: (_role: string, s: string) => s,
       bold: (s: string) => s,
@@ -774,6 +915,78 @@ describe("header", () => {
   });
   const bare = (lines: string[]): string =>
     lines.map(stripTerminalSequences).join("\n");
+  const visual = (lines: string[]): string =>
+    `${lines.map((line) => stripTerminalSequences(line).trimEnd()).join("\n")}\n`;
+
+  it("validates the shared snapshot manifest schema", () => {
+    const snapshots = parseHeaderSnapshots(headerSnapshotManifest);
+    const base = snapshots[0];
+    assert.ok(base);
+    assert.throws(
+      () => parseHeaderSnapshots([{ ...base, file: "../escape.txt" }]),
+      /invalid shape/,
+    );
+    assert.throws(
+      () => parseHeaderSnapshots([base, { ...base, name: "duplicate" }]),
+      /repeats/,
+    );
+    assert.throws(
+      () => parseHeaderSnapshots([{ ...base, unexpected: true }]),
+      /unknown field unexpected/,
+    );
+    assert.throws(
+      () => parseHeaderSnapshots([{ ...base, focus: "editor" }]),
+      /invalid shape/,
+    );
+  });
+
+  it("keeps the snapshot manifest and checked-in fixture list synchronized", () => {
+    const headerSnapshots = parseHeaderSnapshots(headerSnapshotManifest);
+    const actual = readdirSync(snapshotFixtureDir)
+      .filter((file) => /^header-.*\.txt$/.test(file))
+      .sort();
+    const expected = headerSnapshots.map(({ file }) => file).sort();
+    assert.deepEqual(actual, expected);
+  });
+
+  it("matches the shared compact and full visual snapshot matrix", () => {
+    const headerSnapshots = parseHeaderSnapshots(headerSnapshotManifest);
+    for (const snapshot of headerSnapshots) {
+      assert.equal(
+        visual(renderSnapshot(snapshot)),
+        readFileSync(resolve(snapshotFixtureDir, snapshot.file), "utf8"),
+        `${snapshot.name} header changed; review the rendered fixture before updating it`,
+      );
+    }
+  });
+
+  it("omits the session rail from minimum long-identity snapshots", () => {
+    const snapshots = parseHeaderSnapshots(headerSnapshotManifest);
+    for (const file of [
+      "header-compact-60x16-long-identity.txt",
+      "header-compact-60x16-long-identity-ascii.txt",
+    ]) {
+      const snapshot = snapshots.find((candidate) => candidate.file === file);
+      assert.ok(snapshot);
+      const rendered = visual(renderSnapshot(snapshot));
+      assert.match(rendered, /workspace pinevim-ui-layo/);
+      assert.doesNotMatch(rendered, /long-session-name/);
+    }
+  });
+
+  it("renders plain IDE labels when focus is omitted", () => {
+    const snapshots = parseHeaderSnapshots(headerSnapshotManifest);
+    for (const file of [
+      "header-compact-80x24-ide.txt",
+      "header-full-120x30-ide.txt",
+    ]) {
+      const snapshot = snapshots.find((candidate) => candidate.file === file);
+      assert.ok(snapshot);
+      const rendered = visual(renderSnapshot(snapshot));
+      assert.match(rendered, /\bIDE\b/);
+      assert.doesNotMatch(rendered, /agent|editor/);
+    }
+  });
 
   it("full pine is permanent at >= 100 columns (even after turns)", () => {
     const splash = makeWith(120, idle);
@@ -796,32 +1009,301 @@ describe("header", () => {
     assert.match(bare(collapsed), /CHAT/);
   });
 
-  it("collapsed compact mark: two lines at 80-99, one line at 60-79", () => {
+  it("collapsed compact mark uses four lines at 60-99 columns", () => {
     const wide = makeWith(85, active);
-    assert.equal(wide.length, 2);
+    assert.equal(wide.length, 4);
     assert.match(bare(wide), /\/\|\|\\/);
     const narrow = makeWith(70, active);
-    assert.equal(narrow.length, 1);
+    assert.equal(narrow.length, 4);
     assert.match(bare(narrow), /\//);
+  });
+
+  it("keeps the launch splash compact at 60x16 and 80x24", () => {
+    assert.equal(MIN_FULL_SPLASH_ROWS, 25);
+    const minimum = makeWith(60, idle, "pinevim-dark", 16);
+    assert.equal(minimum.length, 4);
+    assert.match(bare(minimum), /pinevim/);
+    assert.match(bare(minimum), /CHAT/);
+
+    const standard = makeWith(80, idle, "pinevim-dark", 24);
+    assert.equal(standard.length, 4);
+    assert.match(bare(standard), /pinevim/);
+    assert.match(bare(standard), /\/\|\|\\/);
+
+    const tall = makeWith(80, idle, "pinevim-dark", 25);
+    assert.equal(tall.length, 11);
+  });
+
+  it("uses live TUI height on every render", () => {
+    const terminal = { rows: 24 };
+    const tui = { requestRender: () => {}, terminal } as never;
+    const theme = {
+      name: "pinevim-dark",
+      fg: (_role: string, value: string) => value,
+      bold: (value: string) => value,
+      getFgAnsi: () => null,
+    } as never;
+    const info = {
+      workspace: "~/proj",
+      sessionName: null,
+      mode: "CHAT" as const,
+      lifecycle: idle,
+    };
+    const header = headerFactory(tui, theme, g, info);
+    assert.equal(header.render(80).length, 4);
+    terminal.rows = 30;
+    assert.equal(header.render(80).length, 11);
+    terminal.rows = 16;
+    assert.equal(header.render(80).length, 4);
   });
 
   it("every header line fits the requested width in all bands and states", () => {
     for (const width of [60, 79, 80, 99, 100, 120, 200]) {
-      for (const lc of [idle, active]) {
-        const lines = makeWith(width, lc);
-        assert.ok(lines.length >= 1, `no lines at ${width}`);
-        for (const line of lines) {
-          assert.ok(
-            [...stripTerminalSequences(line)].length <= width,
-            `line exceeds ${width}: ${stripTerminalSequences(line)}`,
-          );
+      for (const rows of [16, 24, 30]) {
+        for (const lc of [idle, active]) {
+          const lines = makeWith(width, lc, "pinevim-dark", rows);
+          assert.ok(lines.length >= 1, `no lines at ${width}x${rows}`);
+          for (const line of lines) {
+            assert.ok(
+              [...stripTerminalSequences(line)].length <= width,
+              `line exceeds ${width} at ${rows} rows: ${stripTerminalSequences(line)}`,
+            );
+          }
         }
       }
     }
   });
 
+  it("fits long identity rails at the minimum supported width", () => {
+    const tui = {
+      requestRender: () => {},
+      terminal: { rows: 30 },
+    } as never;
+    const theme = {
+      name: "pinevim-dark",
+      fg: (_role: string, value: string) => value,
+      bold: (value: string) => value,
+      getFgAnsi: () => null,
+    } as never;
+    const info = {
+      workspace: "pinevim-ui-layout-review-workspace",
+      sessionName: "long-session-name-for-layout-review",
+      mode: "CHAT" as const,
+      lifecycle: idle,
+    };
+    for (const width of [60, 61, 70, 74, 80]) {
+      const lines = headerFactory(tui, theme, g, info).render(width);
+      assert.equal(lines.length, 11, `unexpected splash height at ${width}`);
+      for (const line of lines) {
+        assert.ok(
+          [...stripTerminalSequences(line)].length <= width,
+          `identity rail exceeds ${width}: ${stripTerminalSequences(line)}`,
+        );
+      }
+    }
+    (tui as unknown as { terminal: { rows: number } }).terminal.rows = 16;
+    const compact = headerFactory(tui, theme, g, info).render(60);
+    assert.equal(compact.length, 4);
+    const asciiLines = headerFactory(tui, theme, glyphs("ascii"), info).render(
+      60,
+    );
+    assert.ok(
+      asciiLines.every((line) =>
+        [...stripTerminalSequences(line)].every(
+          (ch) => (ch.codePointAt(0) ?? 0) <= 0x7f,
+        ),
+      ),
+      "ASCII header emitted a non-ASCII glyph",
+    );
+
+    (tui as unknown as { terminal: { rows: number } }).terminal.rows = 24;
+    const standard = headerFactory(tui, theme, g, info).render(80);
+    assert.equal(standard.length, 4);
+    for (const line of standard) {
+      assert.ok(
+        [...stripTerminalSequences(line)].length <= 80,
+        `identity rail exceeds 80: ${stripTerminalSequences(line)}`,
+      );
+    }
+    const asciiStandard = headerFactory(
+      tui,
+      theme,
+      glyphs("ascii"),
+      info,
+    ).render(80);
+    assert.equal(asciiStandard.length, 4);
+    assert.ok(
+      asciiStandard.every((line) =>
+        [...stripTerminalSequences(line)].every(
+          (ch) => (ch.codePointAt(0) ?? 0) <= 0x7f,
+        ),
+      ),
+      "80-column ASCII header emitted a non-ASCII glyph",
+    );
+    assert.ok(
+      asciiStandard.every(
+        (line) => [...stripTerminalSequences(line)].length <= 80,
+      ),
+      "80-column ASCII header overflowed",
+    );
+  });
+
   it("suppresses below 60 columns", () => {
     assert.deepEqual(makeWith(59, idle), []);
+  });
+});
+
+describe("style helpers", () => {
+  it("preserves the theme receiver for bold and selected-surface styles", () => {
+    class ReceiverTheme {
+      name = "test";
+      fg(_role: string, value: string): string {
+        return `${this.name}:${value}`;
+      }
+      bold(value: string): string {
+        return `${this.name}!${value}`;
+      }
+      bg(_role: string, value: string): string {
+        return `${this.name}+${value}`;
+      }
+    }
+    const theme = new ReceiverTheme() as never;
+    assert.equal(style(theme, "accent", "x"), "test:x");
+    assert.equal(strong(theme, "accent", "x"), "test!test:x");
+    assert.equal(surface(theme, "muted", "x"), "test+test:x");
+  });
+});
+
+describe("frame surfaces", () => {
+  const frameTheme = {
+    name: "pinevim-dark",
+    fg: (role: string, text: string) =>
+      role === "accent" ? `A${text}A` : text,
+    bold: (text: string) => text,
+    bg: (_role: string, text: string) => `B${text}B`,
+    getFgAnsi: () => "\\x1b[38;2;61;255;160m",
+  } as never;
+  const frameTui = { requestRender: () => {} } as never;
+  const idle = initialLifecycle();
+  const tooling: LifecycleState = {
+    ...idle,
+    lifecycle: "tooling",
+    lastTool: "bash",
+    toolsRun: 1,
+  };
+
+  it("keeps the live activity first and gives the band a quiet visual rail", () => {
+    const band = bandFactory(frameTui, frameTheme, glyphs("unicode"), {
+      mode: "CHAT",
+      lifecycle: tooling,
+      queued: false,
+      ascii: false,
+      ctxPercent: 40,
+      model: "gpt-test",
+      thinking: "medium",
+      prefix: "F12",
+    });
+    const line = stripTerminalSequences(band.render(100).join("\\n"));
+    assert.match(line, /CHAT/);
+    assert.match(line, /F12 \? keys/);
+  });
+
+  it("makes the deck an environment row instead of repeating lifecycle", () => {
+    const footer = {
+      getGitBranch: () => "main",
+      onBranchChange: () => {},
+    } as never;
+    const deck = deckFactory(frameTui, frameTheme, footer, glyphs("unicode"), {
+      lifecycle: tooling,
+      ctxPercent: 42,
+      model: "gpt-test",
+      thinking: "medium",
+      prefix: "F12",
+      ascii: false,
+    });
+    const line = stripTerminalSequences(deck.render(100).join("\\n"));
+    assert.match(line, /ENV/);
+    assert.match(line, /ctx /);
+    assert.match(line, /model gpt-test/);
+    assert.match(line, /think med/);
+    assert.match(line, /branch main/);
+    assert.doesNotMatch(line, /idle|tooling/);
+  });
+
+  it("renders a friendly first-run welcome and expandable run details", () => {
+    const welcome = welcomeRenderer()(
+      {
+        customType: WELCOME_TYPE,
+        data: {
+          lines: [
+            "PineVim workspace ready",
+            "type to work · F12 ? keys",
+            "review with /pinevim review",
+          ],
+        },
+      } as never,
+      { expanded: false },
+      frameTheme,
+    );
+    const welcomeLines = welcome?.render(80).map(stripTerminalSequences) ?? [];
+    assert.equal(welcomeLines.length, 3);
+    assert.match(welcomeLines[0]!, /PineVim workspace ready/);
+    assert.match(welcomeLines[2]!, /review/);
+
+    const summary = runSummaryRenderer(UNICODE)(
+      {
+        customType: "pinevim.run",
+        data: {
+          index: 3,
+          seconds: 12,
+          tools: 2,
+          failed: 0,
+          interrupted: false,
+          ctxPercent: 51,
+          changes: "tools 1 files",
+          toolNames: ["read", "edit", "bash", "grep", "test", "git"],
+          toolPaths: [
+            "src/a.ts",
+            "src/piui/components/header.ts",
+            "src/piui/components/band.ts",
+            "tests/unit/piui.test.ts",
+            "README.md",
+          ],
+        },
+      } as never,
+      { expanded: true },
+      frameTheme,
+    );
+    const summaryLines = summary?.render(100).map(stripTerminalSequences) ?? [];
+    assert.match(summaryLines[0]!, /run 3/);
+    assert.match(summaryLines.join("\\n"), /tools: read, edit/);
+    assert.match(summaryLines.join("\\n"), /files: src\/a\.ts/);
+    for (const width of [60, 80, 100]) {
+      const lines = summary?.render(width).map(stripTerminalSequences) ?? [];
+      for (const line of lines) {
+        assert.ok(
+          [...line].length <= width,
+          `run detail exceeds ${width}: ${line}`,
+        );
+      }
+    }
+    assert.ok(
+      renderRunLine(
+        {
+          index: 1,
+          seconds: 1,
+          tools: 0,
+          failed: 0,
+          interrupted: false,
+          ctxPercent: null,
+          changes: null,
+          toolNames: [],
+          toolPaths: [],
+        },
+        UNICODE,
+        80,
+      ).length <= 80,
+    );
   });
 });
 

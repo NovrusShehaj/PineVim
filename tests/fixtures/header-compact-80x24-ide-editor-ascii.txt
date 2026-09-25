@@ -1,0 +1,4 @@
+    /\   pinevim                                                    IDE - editor
+   /||\  - workspace ~/proj
+  /_/\_\
+    ||
