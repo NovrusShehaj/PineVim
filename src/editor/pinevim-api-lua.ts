@@ -48,5 +48,18 @@ function M.wordmark()
   return vim.g.pinevim_wordmark or "pinevim"
 end
 
+--- E7: optional IDE footer toggle (off by default to honor user statusline).
+-- Usage: :lua vim.g.pinevim_footer = true
+function M.footer()
+  if vim.g.pinevim_footer ~= true then return "" end
+  local brand = M.wordmark()
+  local lifecycle = vim.g.pinevim_agent_lifecycle or "offline"
+  return string.format(
+    "\n%%#PinevimFooterBrand#%s IDE %%#PinevimFooterMuted#· paired with agent pane %% \n%%#PinevimFooterMuted#%s · %%#PinevimFooterBrand#F12 ? keys",
+    brand,
+    lifecycle
+  )
+end
+
 return M
 `;
