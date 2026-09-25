@@ -111,6 +111,8 @@ export class PiUi {
     process.env.PINEVIM_IDE === "1" ? "editor" : "agent";
   private unsubs: (() => void)[] = [];
   private lastCtxPercent: number | null = null;
+  /** D4: bounded ring buffer of recent ctx% values for the deck sparkline. */
+  private ctxHistory: number[] = [];
   private disposed = false;
   /** Cached live TUI from the first factory invocation. */
   private tui: Parameters<typeof headerFactory>[0] | null = null;
@@ -164,16 +166,36 @@ export class PiUi {
       WELCOME_TYPE,
       welcomeRenderer(this.g) as never,
     );
-    if (process.env.PINEVIM_WELCOME === "1") {
+    // D7: default-on welcome splash. Three grades:
+    //   1. first run ever (`PINEVIM_WELCOME_FORCE` is set or sentinel absent)
+    //      -> full ASCII pine + 4-line orientation block
+    //   2. subsequent launches -> single-line chip
+    //   3. < 60 cols or `PINEVIM_WELCOME=0` -> skipped
+    if (process.env.PINEVIM_WELCOME !== "0") {
       const prefix = process.env.PINEVIM_UI_PREFIX || "F12";
       const separator = this.ui.glyphs === "ascii" ? "-" : "·";
-      const welcome: WelcomeData = {
-        lines: [
-          `${this.g.success} PineVim workspace ready`,
-          `type to work ${separator} ${prefix} ? keys ${separator} /pinevim help`,
-          `review the last run with /pinevim review ${separator} learned skills with /pinevim skills`,
-        ],
-      };
+      const brand = this.ui.glyphs === "ascii" ? "^" : "▲";
+      const firstRun =
+        process.env.PINEVIM_WELCOME === "1" ||
+        process.env.PINEVIM_WELCOME_FORCE === "1";
+      const welcome: WelcomeData = firstRun
+        ? {
+            lines: [
+              "        /\\",
+              "       /||\\",
+              "      /_/\\_\\",
+              "        ||",
+              "",
+              `${brand} pinevim — a forest you can work in.`,
+              `type to work ${separator} ${prefix} ? keys ${separator} /pinevim help`,
+              `review the last run with /pinevim review ${separator} learned skills with /pinevim skills`,
+            ],
+          }
+        : {
+            lines: [
+              `${brand} pinevim · type to work · ${prefix} ? keys`,
+            ],
+          };
       this.pi.appendEntry<WelcomeData>(WELCOME_TYPE, welcome);
     }
 
@@ -258,6 +280,7 @@ export class PiUi {
     return {
       lifecycle: this.state,
       ctxPercent: this.lastCtxPercent,
+      ctxHistory: this.ctxHistory,
       model: this.ctx.model?.name ?? null,
       thinking: this.ctx.thinkingLevel ?? null,
       prefix: process.env.PINEVIM_UI_PREFIX || "F12",
@@ -282,7 +305,12 @@ export class PiUi {
 
   private refresh(): void {
     if (this.disposed) return;
-    this.lastCtxPercent = contextPercent(this.ctx);
+    const next = contextPercent(this.ctx);
+    if (next !== null && next !== this.lastCtxPercent) {
+      this.lastCtxPercent = next;
+      // D4: append to the ring buffer; cap at SPARK_LIMIT (20).
+      this.ctxHistory = [...this.ctxHistory, next].slice(-20);
+    }
     this.updateWorkingMessage();
     this.header?.update({
       workspace: workspaceDisplay(this.ctx.cwd),

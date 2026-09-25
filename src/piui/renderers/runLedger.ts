@@ -31,6 +31,7 @@ export function renderRunLine(
 ): string {
   const separator = g.rule === "-" ? "-" : "·";
   const ellipsis = g.rule === "-" ? "..." : "…";
+  const brand = g.rule === "-" ? "^" : "▲"; // D3: pine motif anchors the rule
   const parts = [`run ${data.index}`];
   const dur = formatDuration(data.seconds);
   if (dur) parts.push(dur);
@@ -41,12 +42,23 @@ export function renderRunLine(
     parts.push(g.rule === "-" ? asciiText(data.changes) : data.changes);
   if (!data.failed && !data.interrupted && width >= 60)
     parts.push(`${g.success} done`);
+  // D3: right-aligned diffstat + ctx% so the eye compares context pressure.
+  const trail: string[] = [];
   if (data.ctxPercent !== null)
-    parts.push(`ctx ${Math.round(data.ctxPercent)}%`);
-  const head = `${g.rule} ${parts.join(` ${separator} `)} `;
-  const used = [...head].length + 1;
-  const fill = used < width ? g.rule.repeat(width - used) : "";
-  const line = `${head}${fill}`;
+    trail.push(`ctx ${Math.round(data.ctxPercent)}%`);
+  // D3: pull "+N -M" out of `changes` if it matches the worktree summary
+  // format "worktree K files +N -M" emitted by formatChangeSummary.
+  if (data.changes) {
+    const m = /([+-]\d+)\s+([+-]\d+)/.exec(data.changes);
+    if (m) trail.push(`${m[1]} ${m[2]}`);
+  }
+  const head = `${brand} ${parts.join(` ${separator} `)} `;
+  const headLen = [...head].length;
+  const trailText = trail.length > 0 ? ` ${trail.join("  ")} ` : "";
+  const trailLen = [...trailText].length;
+  const ruleBudget = Math.max(0, width - headLen - trailLen);
+  const fill = ruleBudget > 0 ? g.rule.repeat(ruleBudget) : "";
+  const line = `${head}${fill}${trailText}`;
   return [...line].length > width ? fit(line, width, ellipsis) : line;
 }
 
@@ -79,6 +91,11 @@ function summaryDetails(
     const files = toolPaths.slice(0, 4).join(", ");
     const more = toolPaths.length > 4 ? `, +${toolPaths.length - 4}` : "";
     details.push(detail("files", `${files}${more}`));
+  }
+  // D3: dedicated diffstat row, right-aligned.
+  if (data.changes) {
+    const m = /([+-]\d+)\s+([+-]\d+)/.exec(data.changes);
+    if (m) details.push(detail("diff", `${m[1]} ${m[2]}`));
   }
   return details;
 }

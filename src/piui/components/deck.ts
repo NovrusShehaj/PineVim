@@ -17,6 +17,7 @@ import { type LifecycleState } from "../lifecycle.js";
 import {
   branchChip,
   contextGauge,
+  contextSparkline,
   modelChip,
   styledChipLine,
   thinkingChip,
@@ -27,6 +28,8 @@ export interface DeckInfo {
   /** Kept in the data shape for status/focus updates; the deck does not render it. */
   lifecycle: LifecycleState;
   ctxPercent: number | null;
+  /** D4: bounded ring buffer of recent ctx% values for the sparkline. */
+  ctxHistory?: number[];
   model: string | null;
   thinking: string | null;
   prefix: string;
@@ -56,8 +59,13 @@ export class PineDeck extends Container {
     const i = this.info;
     const hintText = width >= 80 ? `${i.prefix} ? keys` : `${i.prefix} ?`;
     const separator = i.ascii ? "-" : "·";
+    // D4: sparkline at width >= 80; gauge below that.
+    const ctxChip =
+      width >= 80
+        ? contextSparkline(i.ctxHistory, i.ctxPercent, width, i.ascii).chip
+        : contextGauge(i.ctxPercent, width >= 100 ? 10 : 6, i.ascii);
     const chips: (Chip | null)[] = [
-      contextGauge(i.ctxPercent, width >= 100 ? 10 : 6, i.ascii),
+      ctxChip,
       modelChip(i.model, i.ascii),
       thinkingChip(i.thinking, i.ascii),
       branchChip(this.branch, i.ascii),

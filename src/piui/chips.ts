@@ -52,6 +52,49 @@ export function queueChip(queued: number | boolean, g: GlyphSet): Chip | null {
 }
 
 /** 10-cell context gauge. ASCII mode uses `#` and `-` so glyphs stay one cell. */
+const SPARK_UNICODE = "\u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588"; // ▁▂▃▄▅▆▇█
+const SPARK_ASCII = ".,-+=iI#";
+const SPARK_LIMIT = 20;
+
+/**
+ * D4: render an N-cell sparkline of recent ctx% values, oldest on the
+ * left, current on the right. The rightmost cell is color-stamped with
+ * the threshold palette so the spike is immediately readable. Degrades
+ * to the gauge when fewer than 2 samples are available so the row never
+ * shows a meaningless one-cell sparkline.
+ */
+export function contextSparkline(
+  history: readonly number[] | undefined,
+  current: number | null,
+  width: number,
+  ascii: boolean,
+): { chip: Chip | null; updated: number[] } {
+  if (current === null) return { chip: null, updated: [] };
+  const series = (history ?? []).slice(-SPARK_LIMIT);
+  const updated = [...series, current].slice(-SPARK_LIMIT);
+  if (updated.length < 2) {
+    return {
+      chip: contextGauge(current, width >= 100 ? 10 : 6, ascii),
+      updated,
+    };
+  }
+  const chars = ascii ? SPARK_ASCII : SPARK_UNICODE;
+  const cells = updated.map((v) => {
+    const clamped = Math.max(0, Math.min(100, Math.round(v)));
+    const idx = Math.min(
+      chars.length - 1,
+      Math.floor((clamped / 100) * (chars.length - 1)),
+    );
+    return chars[idx] ?? chars[0]!;
+  });
+  const last = Math.max(0, Math.min(100, Math.round(current)));
+  const text = `ctx ${cells.join("")} ${last}%`;
+  const role: Chip["role"] =
+    last >= 90 ? "error" : last >= 75 ? "warning" : "muted";
+  return { chip: { text, role }, updated };
+}
+
+/** 10-cell context gauge. ASCII mode uses `#` and `-` so glyphs stay one cell. */
 export function contextGauge(
   percent: number | null,
   width = 10,

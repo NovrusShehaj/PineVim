@@ -49,6 +49,40 @@ export interface HelpRow {
   action: string;
 }
 
+/**
+ * D8: state-aware help rows. Show only the relevant subset of chords
+ * given the current controller state. Caller passes the same
+ * `StatusFacts` it uses for the status popup.
+ */
+export function helpRowsForState(
+  prefix: string,
+  facts: StatusFacts,
+  _ascii = false,
+): HelpRow[] {
+  const p = prefixLabel(prefix);
+  const rows: HelpRow[] = [];
+  const dead = facts.telemetry?.lifecycle === "error" || false;
+  // We have no direct `state` here; use the agent-dead signal from telemetry
+  // and the slash flags for visibility. Conservative defaults: include
+  // every chord, omit those that are not currently meaningful.
+  if (!dead) {
+    rows.push({ key: `${p} i`, action: "IDE view" });
+    rows.push({ key: `${p} c`, action: "chat view" });
+    rows.push({ key: `${p} a`, action: "hide/show agent" });
+    rows.push({ key: `${p} Tab`, action: "switch focus" });
+    rows.push({ key: `${p} Left`, action: "agent width -5" });
+    rows.push({ key: `${p} Right`, action: "agent width +5" });
+  }
+  rows.push({ key: `${p} r`, action: dead ? "retry Pi (required)" : "retry Pi (if dead)" });
+  rows.push({ key: `${p} q`, action: "safe quit" });
+  rows.push({ key: `${p} s`, action: "workspace status" });
+  rows.push({ key: `${p} t`, action: "session timeline" });
+  rows.push({ key: `${p} m`, action: "command menu" });
+  rows.push({ key: `${p} ?`, action: "this help" });
+  rows.push({ key: `${p} ${p}`, action: "literal prefix" });
+  return rows;
+}
+
 export function helpRows(prefix: string): HelpRow[] {
   const p = prefixLabel(prefix);
   return [

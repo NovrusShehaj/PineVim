@@ -10,6 +10,7 @@ import {
 } from "../../src/piui/glyphs.js";
 import {
   contextGauge,
+  contextSparkline,
   chipLine,
   lifecycleChip,
   modeChip,
@@ -1401,6 +1402,74 @@ describe("frame surfaces", () => {
         80,
       ).length <= 80,
     );
+  });
+  it("D3: run line carries the brand mark and right-aligned diffstat", () => {
+    const line = renderRunLine(
+      {
+        index: 7,
+        seconds: 38.2,
+        tools: 5,
+        failed: 0,
+        interrupted: false,
+        ctxPercent: 51,
+        changes: "worktree 3 files +12 -3",
+        toolNames: ["read", "edit", "bash"],
+        toolPaths: ["src/a.ts", "src/b.ts"],
+      },
+      UNICODE,
+      120,
+    );
+    // Brand mark anchors the left.
+    assert.ok(line.startsWith("\u25b2"), `expected brand prefix, got: ${line}`);
+    // diffstat appears on the right.
+    assert.match(line, /\+12\s+-3/);
+    // ctx% also right-aligned.
+    assert.match(line, /ctx\s+51%/);
+  });
+  it("D3: ascii mode uses ^ brand and ASCII-safe diffstat", () => {
+    const line = renderRunLine(
+      {
+        index: 2,
+        seconds: 12,
+        tools: 3,
+        failed: 1,
+        interrupted: false,
+        ctxPercent: 71,
+        changes: "worktree 1 files +5 -2",
+        toolNames: ["bash"],
+        toolPaths: [],
+      },
+      ASCII,
+      80,
+    );
+    assert.ok(line.startsWith("^"), `expected ^ prefix, got: ${line}`);
+    assert.match(line, /\+5\s+-2/);
+    // Every char must be 7-bit printable.
+    assert.ok(
+      [...line].every((ch) => (ch.codePointAt(0) ?? 0) <= 0x7f),
+      "ascii run line emitted non-ASCII",
+    );
+  });
+  it("D4: sparkline renders an N-cell series at width >= 80", () => {
+    const { chip, updated } = contextSparkline([10, 20, 35, 50, 70], 75, 120, false);
+    assert.ok(chip);
+    assert.match(chip!.text, /^ctx [\u2581-\u2588]+ 75%$/);
+    assert.equal(updated.length, 6);
+    assert.equal(updated[updated.length - 1], 75);
+  });
+  it("D4: sparkline degrades to gauge when fewer than 2 samples", () => {
+    const { chip } = contextSparkline([], 50, 120, false);
+    assert.ok(chip);
+    assert.match(chip!.text, /ctx /);
+    assert.doesNotMatch(chip!.text, /\u2581/); // not sparkline form
+  });
+  it("D4: sparkline color threshold fires at 90% (error) and 75% (warning)", () => {
+    const high = contextSparkline([50], 95, 120, false).chip;
+    const mid = contextSparkline([50], 80, 120, false).chip;
+    const low = contextSparkline([50], 50, 120, false).chip;
+    assert.equal(high?.role, "error");
+    assert.equal(mid?.role, "warning");
+    assert.equal(low?.role, "muted");
   });
 });
 
