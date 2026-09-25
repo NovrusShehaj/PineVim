@@ -229,18 +229,76 @@ function M.arm()
   if vim.env.PINEVIM ~= "1" then
     return
   end
+  -- E2: expose the active palette colors to the wordmark / statusline modules
+  -- via vim.g.* so they can read theme-aware colors without re-loading the
+  -- JSON. Trunk factor follows the same convention as the JS side
+  -- (logo.ts:52-65) — light themes lift > 1, dark themes stay at 0.6.
+  local palette = load_palette(theme_name())
+  if palette and palette.accent then
+    vim.g.pinevim_accent = palette.accent
+    vim.g.pinevim_muted = palette.muted or palette.dim
+    -- E6: trunk factor parity (light themes lift > 1).
+    local bg = vim.o.background == "light"
+    local name = theme_name()
+    if name == "pinevim-snow" then
+      vim.g.pinevim_trunk_factor = 1.35
+    elseif name == "pinevim-light" then
+      vim.g.pinevim_trunk_factor = 1.3
+    elseif name == "pinevim-sunrise" then
+      vim.g.pinevim_trunk_factor = 1.25
+    elseif name == "pinevim-paper" then
+      vim.g.pinevim_trunk_factor = 1.4
+    elseif bg then
+      vim.g.pinevim_trunk_factor = 1.2
+    else
+      vim.g.pinevim_trunk_factor = 0.6
+    end
+  end
+
+  -- E5: themed statusline for the IDE when no plugin owns it. Set BEFORE
+  -- the autocmd group so that even if lualine later overrides, the
+  -- themed colors persist as the floor (highlight precedence).
+  if vim.g.pinevim_chrome ~= false then
+    vim.cmd([[ set statusline^=%{&modified?'\ %*\ ':'\ \ \ '}\ ]])
+    vim.cmd([[ set statusline+=%#PinevimStatusBrand#\ %{get(g:,'pinevim_wordmark','pinevim')}\ \ ]])
+    vim.cmd([[ set statusline+=%#StatusLine#\ %f\ \ ]])
+    vim.cmd([[ set statusline+=%#PinevimStatusMuted#\ %{get(g:,'pinevim_agent_lifecycle','offline')}\ \ \ ]])
+    vim.cmd([[ set statusline+=%#StatusLineNC#\ %l:%c\ \ \ ]])
+  end
+
   local group = vim.api.nvim_create_augroup("PinevimTheme", { clear = true })
   vim.api.nvim_create_autocmd("User", {
     group = group,
     pattern = "LazyDone",
     callback = function()
       M.apply()
+      -- E1: render the transient startup splash AFTER LazyVim has finished
+      -- its own startup so the splash is the last thing visible before the
+      -- user starts editing.
+      pcall(function()
+        require("pinevim.splash").splash()
+      end)
     end,
   })
   vim.api.nvim_create_autocmd("VimEnter", {
     group = group,
     callback = function()
       vim.defer_fn(M.apply, 50)
+    end,
+  })
+  -- E1 (fallback): if LazyVim is not installed, render the splash directly
+  -- from VimEnter so the brand is still visible.
+  vim.api.nvim_create_autocmd("VimEnter", {
+    group = group,
+    callback = function()
+      vim.defer_fn(function()
+        local has_lazy = pcall(vim.fn.exists, ":Lazy")
+        if has_lazy == 0 then
+          pcall(function()
+            require("pinevim.splash").splash()
+          end)
+        end
+      end, 200)
     end,
   })
 end

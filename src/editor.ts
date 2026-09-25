@@ -1,7 +1,10 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { executable } from "./config.js";
 import { NVIM_THEME_LUA } from "./editor/theme-script.js";
+import { SPLASH_LUA } from "./editor/splash-lua.js";
+import { WORDMARK_LUA } from "./editor/wordmark-lua.js";
+import { PINEVIM_API_LUA } from "./editor/pinevim-api-lua.js";
 
 /** Private runtime tree that holds the editor theme module. */
 export function editorRuntimePath(runtime: string): string {
@@ -14,15 +17,39 @@ export function editorVimCommand(root: string): string {
   return `set runtimepath^=${escaped}`;
 }
 
+/**
+ * Write the bundled PineVim Lua modules to the runtime path so Neovim
+ * can `require()` them. Single bundle per launch — content-checked for
+ * cheap idempotency.
+ */
+async function writeLuaModules(root: string): Promise<void> {
+  const luaDir = join(root, "lua", "pinevim");
+  await mkdir(luaDir, { recursive: true, mode: 0o700 });
+  const files: Array<[string, string]> = [
+    ["init.lua", NVIM_THEME_LUA],
+    ["splash.lua", SPLASH_LUA],
+    ["wordmark.lua", WORDMARK_LUA],
+    ["api.lua", PINEVIM_API_LUA],
+  ];
+  for (const [name, body] of files) {
+    const path = join(luaDir, name);
+    let existing: Buffer | null = null;
+    try {
+      existing = await readFile(path);
+    } catch {
+      /* missing on first launch */
+    }
+    if (existing && existing.toString("utf8") === body) continue;
+    await writeFile(path, body, { mode: 0o644 });
+  }
+}
+
 export async function editorCommand(
   path: string,
   runtime: string,
 ): Promise<string[]> {
   const root = editorRuntimePath(runtime);
-  await mkdir(join(root, "lua", "pinevim"), { recursive: true, mode: 0o700 });
-  await writeFile(join(root, "lua", "pinevim", "init.lua"), NVIM_THEME_LUA, {
-    mode: 0o644,
-  });
+  await writeLuaModules(root);
   // Unset remote-editor markers only for this child, preserving intentional NVIM_APPNAME.
   return [
     "/usr/bin/env",
