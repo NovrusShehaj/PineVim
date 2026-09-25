@@ -27,11 +27,44 @@ checklist and [Testing](Testing.md) for the procedures it references.
       routing, bracketed paste, CSI-u, resize, crash/resume)
 - [ ] `npm run test:package` (tarball pack, allowlist audit, disposable-prefix
       install, help/version smoke)
-- [ ] `npm run benchmark` and record startup/transition/idle results against
-      targets (<250 ms startup p95, <100 ms transition p95, <1% idle CPU)
+- [ ] `npm run benchmark` meets its targets (<250 ms startup p95, <100 ms
+      transition p95, <1% idle CPU) — see
+      [Recorded baselines](#recorded-baselines); currently **unmet**: the
+      first baseline records launch-to-bridge p95 at ~4× the target
 - [ ] GitHub `Integration` workflow green on linux and macos
       (`workflow_dispatch` or `integration` label; installs tmux 3.5 from
       source, Neovim 0.12.4, runs integration + phase 0 + SSH smoke)
+
+## Recorded baselines
+
+First recorded benchmark baseline. These numbers establish the measurement
+point; they do **not** close the gate. A release may not proceed while the
+automated-gates benchmark item above is unmet or explicitly renegotiated.
+
+- Commit: `d27a9d9` (chore/UI-Improvements) · Date: 2026-09-25
+- Environment: local macOS development machine (Darwin), Node 26.9.0,
+  Pi 0.87.1, tmux 3.7c, warm filesystem caches, no attached client
+- Method: `npm run benchmark` — 20 fresh CLI processes for startup samples,
+  40 live pane transitions at 120×30, 60 s controller idle measurement
+  (controller process only; child tmux/Pi/Neovim CPU excluded)
+
+| Metric                   | Target               | Run 1     | Run 2    | Status                |
+| ------------------------ | -------------------- | --------- | -------- | --------------------- |
+| Launch-to-bridge p95     | <250 ms              | 1027.9 ms | 956.6 ms | **fail (~4× target)** |
+| Live pane transition p95 | <100 ms              | 109.9 ms  | 82.5 ms  | **straddles target**  |
+| Controller idle CPU      | <1%                  | 0.11%     | 0.29%    | pass                  |
+| Full CLI prelaunch p95   | (no declared target) | 417.5 ms  | 381.3 ms | informational         |
+
+Interpretation:
+
+- Launch-to-bridge is consistently ~1 s across two runs, so the gap is
+  structural, not load noise. Candidate cause for profiling: startup work
+  added since the target was set (e.g. per-start theme copying into Pi's
+  themes directory) and Pi/extension handshake cost. Profile before tuning.
+- Transition p95 varies ~25% between runs (82–110 ms); treat single-run
+  passes under 100 ms as noise until several consecutive runs clear it.
+- Two runs on one machine are a baseline, not a distribution. Rerun on each
+  release candidate and per major platform before closing the gate.
 
 ## Fault-injection evidence
 
