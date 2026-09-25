@@ -1,12 +1,45 @@
 import { realpath, mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { access } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import { PineError } from "../../src/diagnostics.js";
 import { Store } from "../../src/persistence.js";
 import { defaults, executable } from "../../src/config.js";
 import { shellQuote } from "../../src/adapters/tmux/config.js";
 import { Tmux } from "../../src/adapters/tmux/client.js";
 import { AppController, newMetadata } from "../../src/core/controller.js";
 import { randomUUID } from "node:crypto";
+
+/**
+ * The harness spawns the real Pi CLI with PineVim's compiled extension.
+ * When the suites run under tsx (or any TS-on-the-fly loader), the adapter's
+ * `import.meta.url`-relative extension path resolves next to the TypeScript
+ * source, where no extension.js exists: Pi then dies at spawn and every test
+ * fails with a misleading `LAYOUT did not converge`. Fail fast with the
+ * actual remedy instead (audit finding F-07).
+ */
+async function assertRunnableLoader(): Promise<void> {
+  const extension = fileURLToPath(
+    new URL("../../src/adapters/pi/extension.js", import.meta.url),
+  );
+  const missing = await access(extension).then(
+    () => false,
+    () => true,
+  );
+  if (!missing) return;
+  const compiled = resolve("build/tests/integration/fault.test.js");
+  throw new PineError(
+    "LOADER",
+    `PineVim's compiled Pi extension is missing at ${extension}. ` +
+      `The integration suites are running under a TypeScript loader, so Pi ` +
+      `would die at spawn and every test would fail with misleading ` +
+      `LAYOUT errors. Compile first, then run the compiled output: ` +
+      `npm test, npm run test:integration, or ` +
+      `npx tsc -p tsconfig.test.json && node --test ${compiled}. ` +
+      `Never point Pi's --extension at TypeScript sources.`,
+  );
+}
 export async function until(
   check: () => boolean | Promise<boolean>,
   timeout = 15000,
@@ -19,6 +52,7 @@ export async function until(
   throw new Error("Test condition deadline exceeded");
 }
 export async function harness(columns = 120, rows = 30, provider = false) {
+  await assertRunnableLoader();
   const root = await realpath(await mkdtemp(join(tmpdir(), "pv-test-")));
   const workspace = join(root, "workspace");
   await mkdir(workspace);
@@ -65,7 +99,13 @@ export async function harness(columns = 120, rows = 30, provider = false) {
       ' --clean -i NONE "$@"\n',
     { mode: 0o700 },
   );
-  const config = { ...defaults, nvim: wrapper };
+  // Deep-copy the ui section: tests mutate per-controller policies and must
+  // never write through to the shared defaults object.
+  const config = {
+    ...defaults,
+    nvim: wrapper,
+    ui: { ...defaults.ui, confirm: { ...defaults.ui.confirm } },
+  };
   const store = new Store(workspace, join(root, "pine-state"));
   await store.acquire();
   const runtime = await store.runtime();

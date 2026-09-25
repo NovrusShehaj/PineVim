@@ -440,6 +440,10 @@ export class AppController {
     } catch (e) {
       this.tmux.deadline = Infinity;
       this.state.pending = null;
+      // A queued job that observes a stopped controller must not write: the
+      // shutdown path may have already unlinked the metadata (clean final-pane
+      // exit), and persisting here would resurrect it behind a dead workspace.
+      if (this.stopped) throw e;
       await this.reconcile(false).catch(() => {});
       await this.apply(this.state).catch(() => {});
       await this.persist().catch(() => {});
@@ -679,7 +683,58 @@ export class AppController {
     this.metadata.updated = Date.now();
     await this.store.save(this.metadata);
   }
+  /** Execute the action a confirmation was guarding (H-04 policy path). */
+  private async runConfirmed(action: "quit" | "retry"): Promise<void> {
+    if (action === "retry") await this.retry();
+    else await this.quit(true);
+  }
+
   private async confirm(action: "quit" | "retry"): Promise<void> {
+    const policy = this.config.ui.confirm[action];
+    if (policy === "never") {
+      await this.runConfirmed(action);
+      return;
+    }
+    if (policy === "always") {
+      // Two-stroke confirmation: the first attempt arms a short window and
+      // refuses; repeating the action inside the window proceeds. This is
+      // the deliberate headless alternative to the tmux confirm prompt.
+      const pending = this.confirmPending;
+      if (
+        pending &&
+        pending.action === action &&
+        pending.expires >= Date.now()
+      ) {
+        this.confirmPending = null;
+        await this.runConfirmed(action);
+        return;
+      }
+      this.confirmPending = {
+        nonce: randomUUID(),
+        action,
+        expires: Date.now() + 30000,
+      };
+      throw new PineError(
+        "CONFIRM",
+        action === "quit"
+          ? 'Repeat the quit to confirm; active Pi work will be cancelled (ui.confirm.quit is "always").'
+          : 'Repeat the recovery to confirm; a replacement Pi takes over the last session (ui.confirm.retry is "always").',
+      );
+    }
+    // policy === "ask": prompt only when a client can actually answer it.
+    let attached: boolean;
+    try {
+      attached = (await this.tmux.dimensions()) !== null;
+    } catch {
+      attached = false;
+    }
+    if (!attached)
+      throw new PineError(
+        "CONFIRM",
+        action === "quit"
+          ? 'Quit confirmation needs an attached tmux client. Confirm by repeating the quit (set ui.confirm.quit to "always"), allow unattended quits ("never"), or quit Pi normally.'
+          : 'Recovery confirmation needs an attached tmux client. Confirm by repeating the recovery (set ui.confirm.retry to "always") or allow unattended recovery ("never").',
+      );
     const nonce = randomUUID();
     this.confirmPending = { nonce, action, expires: Date.now() + 30000 };
     await this.tmux.confirm(

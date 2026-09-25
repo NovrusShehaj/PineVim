@@ -316,6 +316,14 @@ test(
         h.controller.intent("quit"),
       ]);
       await until(() => h.controller.state.lifecycle === "stopped");
+      // A queued follower (death-hook/coalescer reconcile) that observes the
+      // stopped controller must fail without persisting: the shutdown path
+      // already unlinked the metadata, and the old dispatch catch block
+      // resurrected it behind a dead workspace (rare full-suite flake).
+      await assert.rejects(
+        h.controller.intent("status"),
+        /Controller stopped; use --resume/,
+      );
       assert.equal(await h.store.load(), null);
       assert.equal(await h.tmux.reachable(), false);
       await Promise.all([h.controller.detach(), h.controller.detach()]);

@@ -13,6 +13,7 @@ export interface Config {
   /** PineVIM in-pane UI controls (plan §30). Absent fields keep defaults. */
   ui: UiConfig;
 }
+export type ConfirmPolicy = "ask" | "always" | "never";
 export interface UiConfig {
   /** Master switch for the PineVIM frame inside the Pi pane. */
   enabled: boolean;
@@ -34,6 +35,14 @@ export interface UiConfig {
     | "pinevim-cyberpunk"
     | "pinevim-forest"
     | "pinevim-snow";
+  /**
+   * Per-action confirmation policy for destructive or recovery actions
+   * (plan H-04): "ask" prompts via tmux when a client is attached and
+   * refuses with guidance headless; "always" refuses until the user
+   * repeats the action; "never" proceeds without prompting, enabling
+   * headless and scripted recovery.
+   */
+  confirm: { quit: ConfirmPolicy; retry: ConfirmPolicy };
 }
 export const defaults: Config = {
   prefix: "F12",
@@ -42,7 +51,13 @@ export const defaults: Config = {
   nvim: "nvim",
   tmux: "tmux",
   logLevel: "off",
-  ui: { enabled: true, motion: "on", glyphs: "unicode", theme: "auto" },
+  ui: {
+    enabled: true,
+    motion: "on",
+    glyphs: "unicode",
+    theme: "auto",
+    confirm: { quit: "ask", retry: "ask" },
+  },
 };
 export function xdg(name: string, fallback: string): string {
   const value = process.env[name];
@@ -107,7 +122,10 @@ export function validateConfig(input: unknown): Config {
       case "ui": {
         if (!value || typeof value !== "object" || Array.isArray(value))
           throw new PineError("CONFIG", "ui must be an object.");
-        const ui: UiConfig = { ...defaults.ui };
+        const ui: UiConfig = {
+          ...defaults.ui,
+          confirm: { ...defaults.ui.confirm },
+        };
         // defaults.ui is shared; give each parse its own copy so a partial
         // ui section cannot mutate the defaults object.
         ui.theme = "auto";
@@ -116,7 +134,8 @@ export function validateConfig(input: unknown): Config {
             key !== "enabled" &&
             key !== "motion" &&
             key !== "glyphs" &&
-            key !== "theme"
+            key !== "theme" &&
+            key !== "confirm"
           )
             throw new PineError(
               "CONFIG",
@@ -156,6 +175,23 @@ export function validateConfig(input: unknown): Config {
                 "ui.theme must be auto or a pinevim theme (dark, light, mono, neon, cyberpunk, forest, snow).",
               );
             ui.theme = item;
+          }
+          if (key === "confirm") {
+            if (!item || typeof item !== "object" || Array.isArray(item))
+              throw new PineError("CONFIG", "ui.confirm must be an object.");
+            for (const [action, policy] of Object.entries(item)) {
+              if (action !== "quit" && action !== "retry")
+                throw new PineError(
+                  "CONFIG",
+                  "Unknown field in ui.confirm; allowed: quit, retry.",
+                );
+              if (policy !== "ask" && policy !== "always" && policy !== "never")
+                throw new PineError(
+                  "CONFIG",
+                  `ui.confirm.${action} must be ask, always or never.`,
+                );
+              ui.confirm[action] = policy;
+            }
           }
         }
         c.ui = ui;

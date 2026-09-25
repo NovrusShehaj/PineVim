@@ -84,6 +84,9 @@ export default function pinevim(pi: ExtensionAPI): void {
     glyphs: process.env.PINEVIM_UI_GLYPHS === "ascii" ? "ascii" : "unicode",
     theme: process.env.PINEVIM_UI_THEME as UiConfig["theme"],
     prefix: process.env.PINEVIM_UI_PREFIX ?? "F12",
+    // Confirmation policy lives in the controller, not the in-pane frame;
+    // the extension never prompts for quit/retry.
+    confirm: { quit: "ask", retry: "ask" },
   });
   let pineUi: PiUi | null = null;
   let lastSent = "";

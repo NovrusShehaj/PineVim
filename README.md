@@ -63,7 +63,7 @@ At **101×24** or larger, IDE mode displays editor left and Pi right. The defaul
 
 ## Safe quit and recovery
 
-Quit Neovim normally, then request PineVim quit. If Pi is busy, PineVim asks for confirmation in tmux before requesting cancellation through Pi's public lifecycle API. No/default/expired confirmation leaves work running. Shutdown has a deadline and preserves processes on timeout. Native Pi `/quit` still quits Pi; a live editor remains available.
+Quit Neovim normally, then request PineVim quit. If Pi is busy, PineVim follows the `ui.confirm.quit` policy before requesting cancellation through Pi's public lifecycle API: `ask` (default) prompts in tmux when a client is attached and refuses with guidance headless, `always` confirms when you repeat the quit within 30 seconds, and `never` cancels without prompting (for scripts and unattended sessions; the same policy governs prefix-r recovery of a dead agent via `ui.confirm.retry`). No/expired confirmation leaves work running. Shutdown has a deadline and preserves processes on timeout. Native Pi `/quit` still quits Pi; a live editor remains available.
 
 Terminal detachment, SIGHUP, and SIGTERM preserve child PTYs. Recover with:
 
@@ -88,12 +88,13 @@ Optional configuration: `${XDG_CONFIG_HOME:-~/.config}/pinevim/config.json`. Not
     "enabled": true,
     "motion": "on",
     "glyphs": "unicode",
-    "theme": "auto"
+    "theme": "auto",
+    "confirm": { "quit": "ask", "retry": "ask" }
   }
 }
 ```
 
-`pi`, `nvim`, and `tmux` may be absolute executable paths. Executable shell expressions, unknown fields, and provider settings are rejected. Supported prefix forms include F1–F24, a lowercase letter, `C-letter`, `M-letter`, and `C-Space`. Invalid tmux configuration fails locally. `PINEVIM_LOG_LEVEL=debug` overrides the config's log level. No executable project config is supported. The `ui` section controls the in-pane PineVim frame: `enabled` (master switch), `motion` (`off` replaces the animated working indicator with a static glyph), `glyphs` (`ascii` forces the ASCII fallback vocabulary for all PineVim chrome), and `theme` (`auto` applies `pinevim-dark` or `pinevim-light` only while Pi is still on its built-in `dark` or `light` theme; an explicit `pinevim-*` name pins that theme; applied per-session, never persisted to Pi settings).
+`pi`, `nvim`, and `tmux` may be absolute executable paths. Executable shell expressions, unknown fields, and provider settings are rejected. Supported prefix forms include F1–F24, a lowercase letter, `C-letter`, `M-letter`, and `C-Space`. Invalid tmux configuration fails locally. `PINEVIM_LOG_LEVEL=debug` overrides the config's log level. No executable project config is supported. The `ui` section controls the in-pane PineVim frame: `enabled` (master switch), `motion` (`off` replaces the animated working indicator with a static glyph), `glyphs` (`ascii` forces the ASCII fallback vocabulary for all PineVim chrome), `theme` (`auto` applies `pinevim-dark` or `pinevim-light` only while Pi is still on its built-in `dark` or `light` theme; an explicit `pinevim-*` name pins that theme; applied per-session, never persisted to Pi settings), and `confirm` (per-action `ask` | `always` | `never` policy for busy quit and dead-agent recovery; `ask` prompts in tmux when a client is attached and refuses with guidance headless, `always` confirms on a repeated action within 30 seconds, `never` proceeds unattended).
 
 State and opt-in logs live under `${XDG_STATE_HOME:-~/.local/state}/pinevim/`. Runtime sockets live in a private directory under a validated `XDG_RUNTIME_DIR` or the OS temporary directory, with a short-path fallback. State files and IPC token files are private. Logs contain allowlisted controller events, rotate at 5 MiB with three archives, and are never uploaded.
 

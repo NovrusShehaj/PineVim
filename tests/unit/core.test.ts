@@ -164,6 +164,25 @@ test("collision ownership uses exact invocation and source", () => {
     false,
   );
 });
+test("ui.confirm policy defaults, parses and rejects without echoing", () => {
+  const parsed = validateConfig({ ui: { confirm: { retry: "never" } } });
+  assert.equal(parsed.ui.confirm.quit, "ask");
+  assert.equal(parsed.ui.confirm.retry, "never");
+  assert.deepEqual(validateConfig({}).ui.confirm, {
+    quit: "ask",
+    retry: "ask",
+  });
+  for (const bad of [
+    { ui: { confirm: { cancel: "never" } } },
+    { ui: { confirm: { quit: "CANARY" } } },
+    { ui: { confirm: "always" } },
+    { ui: { confirm: null } },
+  ])
+    assert.throws(
+      () => validateConfig(bad),
+      (e) => e instanceof Error && !String(e).includes("CANARY"),
+    );
+});
 test("config rejects secret fields, shell commands, invalid enums without echo", () => {
   for (const input of [
     { token: "CANARY" },

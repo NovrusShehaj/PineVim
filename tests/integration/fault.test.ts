@@ -164,6 +164,91 @@ test(
 );
 
 test(
+  "retry with a dead agent recovers Pi headless under confirm.retry never",
+  { timeout: 90000 },
+  async () => {
+    const h = await harness(120, 30, true);
+    try {
+      h.controller.config.ui.confirm.retry = "never";
+      // Complete one turn first: Pi writes the session file on completion,
+      // and retry() validates that recorded reference before respawning.
+      await h.command("a first prompt");
+      await until(() => h.controller.state.busy);
+      await until(() => !h.controller.state.busy, 30000);
+      assert.ok(h.controller.state.sessionFile);
+      const pid = h.controller.state.agent!.pid;
+      await h.command("a second prompt");
+      await until(() => h.controller.state.busy);
+      process.kill(pid, "SIGKILL");
+      await until(() => !h.controller.state.agent!.alive, 10000);
+      // The previously impossible headless path: confirm-before required an
+      // attached tmux client; the never policy respawns without one.
+      await h.controller.intent("retry");
+      await until(
+        () => h.controller.state.agent!.ready && h.controller.state.bridge,
+        30000,
+      );
+      assert.notEqual(h.controller.state.agent!.pid, pid);
+      await h.command("a prompt after restart");
+      await until(() => h.controller.state.busy);
+      await until(() => !h.controller.state.busy, 30000);
+    } finally {
+      await h.close();
+    }
+  },
+);
+
+test(
+  "ask policy refuses headless quit and retry with actionable guidance",
+  { timeout: 60000 },
+  async () => {
+    const h = await harness(120, 30, true);
+    try {
+      // Pi alive and busy with no editor: intent quit reaches the
+      // busy-confirmation guard (a live editor would take the protection
+      // branch instead and return without confirming).
+      await h.command("a prompt");
+      await until(() => h.controller.state.busy);
+      await assert.rejects(
+        h.controller.intent("quit"),
+        /ui\.confirm\.quit|attached tmux client/,
+      );
+      // Dead agent: intent retry reaches the recovery confirmation guard.
+      process.kill(h.controller.state.agent!.pid, "SIGKILL");
+      await until(() => !h.controller.state.agent!.alive, 10000);
+      await assert.rejects(
+        h.controller.intent("retry"),
+        /ui\.confirm\.retry|attached tmux client/,
+      );
+      assert.equal(h.controller.state.mode, "CHAT_ONLY");
+      assert.equal(h.controller.state.editor, null);
+    } finally {
+      await h.close();
+    }
+  },
+);
+
+test(
+  "always policy completes a busy quit on the second attempt inside the window",
+  { timeout: 90000 },
+  async () => {
+    const h = await harness(120, 30, true);
+    try {
+      h.controller.config.ui.confirm.quit = "always";
+      await h.command("a prompt");
+      await until(() => h.controller.state.busy);
+      // First stroke arms the window and refuses; second stroke inside it
+      // cancels the active Pi work and shuts the session down.
+      await assert.rejects(h.controller.intent("quit"), /Repeat the quit/);
+      await h.controller.intent("quit");
+      await until(() => h.controller.state.lifecycle === "stopped", 30000);
+    } finally {
+      await h.close();
+    }
+  },
+);
+
+test(
   "interrupted controller leaves a dead-owner lock; resume reclaims it and recovers Pi",
   { timeout: 90000 },
   async () => {

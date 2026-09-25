@@ -22,8 +22,11 @@ Run integration suites through the compiled path (`npm test`,
 `npm run test:integration`, or `npx tsc -p tsconfig.test.json` followed by
 `node --test build/tests/integration/*.test.js`). Running them directly under
 `tsx` makes Pi's `--extension` path resolve to a nonexistent `extension.js`
-next to the TS source, so the agent pane dies instantly and tests surface
-misleading `LAYOUT did not converge` errors instead of the real cause.
+next to the TS source, so the agent pane dies instantly and tests would
+surface misleading `LAYOUT did not converge` errors instead of the real
+cause. The harness guards against this: under a TypeScript loader every
+suite fails within milliseconds with a `LOADER` error naming the missing
+path and the compiled commands to run.
 
 `test:phase0` independently tests the installed Pi found on PATH. The attached PTY runner tests the compiled CLI, prefix byte routing, literal prefix, bracketed paste, CSI-u, resizing, process identity and controller crash/resume. The outer tmux in its nested case is an isolated fixture configured for extended keys. This does not certify physical keys, terminal fonts, or clipboard behavior.
 
@@ -41,9 +44,12 @@ killed mid-run with the documented resume path adopting a dead agent while a
 live editor is preserved, an editor killed mid-view-switch (Pi survives, a
 replacement editor reopens), a 500-event control IPC flood absorbed without
 wedging intents, and an interrupted controller whose dead-owner lock must be
-reclaimed before resume. Interactive `confirm-before` recovery (prefix-r) is
-excluded: it requires an attached tmux client and stays a manual real-
-environment step.
+reclaimed before resume. Recovery and busy-quit confirmation follow the
+`ui.confirm` policy: `never` respawns Pi and completes quits headless (now
+covered end-to-end), `always` uses a repeat-to-confirm window, and the
+default `ask` uses the tmux `confirm-before` prompt, which requires an
+attached client — headless refusals are tested with actionable guidance,
+while the interactive prompt itself stays a manual real-environment step.
 
 The package smoke packs a tarball, audits its allowlist, installs into a disposable prefix, and exercises help/version and bundled asset availability. It does not publish or install globally.
 
