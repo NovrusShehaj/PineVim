@@ -20,7 +20,7 @@
     "Docs/Implementation-Evidence.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && node scripts/copy-themes.mjs dist/piui/themes && mkdir -p build/src && node scripts/copy-themes.mjs build/src/piui/themes",
+    "build": "tsc -p tsconfig.json && node scripts/copy-themes.mjs dist/piui/themes && mkdir -p build/src && node scripts/copy-themes.mjs build/src/piui/themes && node scripts/build-helptags.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
     "copy:themes": "node scripts/copy-themes.mjs dist/piui/themes && mkdir -p build/src && node scripts/copy-themes.mjs build/src/piui/themes",
     "lint": "eslint src tests --max-warnings 0",

@@ -286,6 +286,20 @@ function M.arm()
       vim.defer_fn(M.apply, 50)
     end,
   })
+  -- X3: generate helptags so users can read the bundled help file.
+  -- pcall because the helptags command requires Ex commands and may be
+  -- restricted in some sandboxes (e.g. nvim --headless).
+  vim.api.nvim_create_autocmd("VimEnter", {
+    group = group,
+    callback = function()
+      vim.defer_fn(function()
+        local helpfile = vim.fn.fnamemodify(vim.env._PINEVIM_RUNTIME or "", ":p") .. "editor/pinevim.txt"
+        if vim.fn.filereadable(helpfile) == 1 then
+          pcall(function() vim.cmd(string.format("helptags %s", vim.fn.fnamemodify(helpfile, ":h"))) end)
+        end
+      end, 300)
+    end,
+  })
   -- E1 (fallback): if LazyVim is not installed, render the splash directly
   -- from VimEnter so the brand is still visible.
   vim.api.nvim_create_autocmd("VimEnter", {
