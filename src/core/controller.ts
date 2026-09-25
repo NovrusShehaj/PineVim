@@ -204,7 +204,7 @@ export class AppController {
         this.state.lifecycle = "running";
         this.state.bridge = false;
         this.state.pending = null;
-        await this.tmux.notify(
+        await this.tmux.notifyBranded(
           "Resumed workspace. Unfinished tool calls were not replayed.",
           "info",
         );
@@ -517,7 +517,7 @@ export class AppController {
       !this.state.editor.alive &&
       (this.state.editor.signal || this.state.editor.exitCode)
     )
-      await this.tmux.notify(recoveryCopy("EDITOR"), "warning");
+      await this.tmux.notifyBranded(recoveryCopy("EDITOR"), "warning");
     const geometry = await this.tmux.dimensions();
     const resized =
       geometry &&
@@ -740,7 +740,7 @@ export class AppController {
         kind === "help"
           ? `${this.config.prefix} then i IDE, c chat, a hide/show, Tab focus, arrows width, r retry, q quit, ? help`
           : this.status();
-      await this.tmux.notify(legacy, "info");
+      await this.tmux.notifyBranded(legacy, "info");
     }
   }
   private async persist(): Promise<void> {
@@ -819,10 +819,10 @@ export class AppController {
       await this.apply({ ...this.state, mode: "IDE_FOCUS", focus: "editor" });
       await this.persist();
       await this.renderStatus();
-      await this.tmux.notify(
-        "Quit Neovim with :qa or :wqa, then repeat PineVim quit. Modified buffers remain protected.",
-        "warning",
-      );
+      await this.tmux.notifyBranded(
+                  "Quit Neovim with :qa or :wqa, then repeat PineVim quit. Modified buffers remain protected.",
+                  "warning",
+                );
       return;
     }
     if (!this.state.agent?.alive) {
@@ -864,7 +864,7 @@ export class AppController {
             if (this.state.lifecycle === "stopping") {
               this.state.lifecycle = "running";
               await this.persist();
-              await this.tmux.notify(
+              await this.tmux.notifyBranded(
                 "Pi shutdown timed out; processes preserved. Wait for Pi to settle or quit it normally.",
                 "warning",
               );

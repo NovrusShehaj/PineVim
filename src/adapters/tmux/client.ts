@@ -7,6 +7,7 @@ import { literal, PineError } from "../../diagnostics.js";
 import { helperCommand, tmuxQuote, tmuxConfig, terminfo } from "./config.js";
 import { menuDisplayArgv } from "./panels.js";
 import { agentWidth } from "../../core/layout.js";
+import { sgr } from "./styled.js";
 import type { State, Child } from "../../core/state.js";
 export interface Pane extends Child {
   session: string;
@@ -323,6 +324,15 @@ export class Tmux {
       throw new PineError("STATUS", "Status format rejected.");
     await this.command("set-option", "-g", "status-left", message);
   }
+  /**
+   * Show a notification toast (PineVim-authored, safe path).
+   *
+   * D2: there are now two paths. `notify()` keeps the safe contract:
+   * any text that has touched external input or a process spawn flows
+   * through `literal()` which strips ANSI and non-ASCII. Use
+   * `notifyBranded()` for PineVim-authored strings that should carry
+   * the brand glyph and color (e.g. "Pi started", "Editor exited").
+   */
   async notify(
     message: string,
     severity?: "info" | "warning" | "error",
@@ -341,6 +351,42 @@ export class Tmux {
       "8000",
       literal(`${prefix}${message}`, 500),
     );
+  }
+
+  /**
+   * D2: branded toast for PineVim-authored messages. Adds a glyph
+   * (`✓` / `▲` / `✗` / `·`) and an SGR color role. Strips any control
+   * characters and doubles `#` for tmux format safety. The text must
+   * be trusted (no external input). For untrusted text, use `notify()`
+   * instead. SGR is passed through (tmux `display-message` honors
+   * inline ANSI).
+   */
+  async notifyBranded(
+    message: string,
+    severity: "info" | "warning" | "error" | "success" = "info",
+  ): Promise<void> {
+    const glyph: Record<typeof severity, string> = {
+      info: "\u00b7", // ·
+      warning: "\u25b2", // ▲
+      error: "\u2717", // ✗
+      success: "\u2713", // ✓
+    };
+    const role: Record<typeof severity, "muted" | "warning" | "error" | "success"> = {
+      info: "muted",
+      warning: "warning",
+      error: "error",
+      success: "success",
+    };
+    // Strip control characters; preserve printable Unicode and SGR.
+    const safe = message.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
+    // Doubling `#` is required because tmux treats `#` as a format
+    // introducer in `display-message` arguments.
+    const payload = sgr(role[severity], `${glyph[severity]} pinevim: ${safe}`).replace(
+      /#/g,
+      "##",
+    );
+    if ([...payload].length > 500) return; // bounded; do not block on overflow
+    await this.command("display-message", "-d", "8000", payload);
   }
 
   /**
