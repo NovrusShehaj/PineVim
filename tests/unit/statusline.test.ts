@@ -261,6 +261,40 @@ describe("status line", () => {
     // pinevim-snow accent maps to "blue"; verify the brand uses it.
     assert.match(line, /#\[fg=blue\]/);
   });
+  it("D11: all four mood themes resolve to a distinct accent", () => {
+    const dusk = paletteForStatus("pinevim-dusk", true);
+    const sunrise = paletteForStatus("pinevim-sunrise", true);
+    const aurora = paletteForStatus("pinevim-aurora", true);
+    const paper = paletteForStatus("pinevim-paper", true);
+    // Each mood theme picks a different tmux color name so they
+    // are visually distinguishable in 256-color terminals.
+    const accents = new Set([dusk.accent, sunrise.accent, aurora.accent, paper.accent]);
+    assert.equal(accents.size, 4, "mood themes must pick distinct accents");
+    assert.equal(dusk.accent, "cyan");
+    assert.equal(sunrise.accent, "yellow");
+    assert.equal(aurora.accent, "magenta");
+    assert.equal(paper.accent, "black");
+  });
+  it("D11: 11 themes are registered (7 role + 4 mood)", () => {
+    // Smoke check: each known theme resolves without throwing.
+    const known = [
+      "pinevim-dark",
+      "pinevim-light",
+      "pinevim-mono",
+      "pinevim-neon",
+      "pinevim-cyberpunk",
+      "pinevim-forest",
+      "pinevim-snow",
+      "pinevim-dusk",
+      "pinevim-sunrise",
+      "pinevim-aurora",
+      "pinevim-paper",
+    ];
+    for (const name of known) {
+      const palette = paletteForStatus(name, true);
+      assert.ok(palette.accent.length > 0, `${name} produced empty accent`);
+    }
+  });
 });
 
 describe("panels", () => {

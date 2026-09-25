@@ -378,6 +378,7 @@ export class Tmux {
       success: "success",
     };
     // Strip control characters; preserve printable Unicode and SGR.
+    // eslint-disable-next-line no-control-regex
     const safe = message.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
     // Doubling `#` is required because tmux treats `#` as a format
     // introducer in `display-message` arguments.

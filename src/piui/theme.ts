@@ -20,6 +20,11 @@ export const PINEVIM_THEMES = [
   "pinevim-cyberpunk",
   "pinevim-forest",
   "pinevim-snow",
+  // D11: mood families. Established in addition to role-mapped variants.
+  "pinevim-dusk",
+  "pinevim-sunrise",
+  "pinevim-aurora",
+  "pinevim-paper",
 ] as const;
 
 export type PinevimThemeName = (typeof PINEVIM_THEMES)[number];

@@ -52,6 +52,11 @@ export const PINE_TRUNK_FACTOR = 0.6;
 export const PINE_TRUNK_FACTOR_OVERRIDES: Readonly<Record<string, number>> = {
   "pinevim-snow": 1.35,
   "pinevim-light": 1.3,
+  // D11: light-background mood families lift the trunk (> 1) for the
+  // same reason as `snow` / `light` — a darker accent against white
+  // reads as a heavy black-green patch instead of a soft shadow.
+  "pinevim-sunrise": 1.25,
+  "pinevim-paper": 1.4,
 };
 
 /**
