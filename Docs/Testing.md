@@ -53,7 +53,7 @@ while the interactive prompt itself stays a manual real-environment step.
 
 The package smoke packs a tarball, audits its allowlist, installs into a disposable prefix, and exercises help/version and bundled asset availability. It does not publish or install globally.
 
-The benchmark samples 20 fresh CLI processes with warm filesystem caches before Pi launch, 40 live-pane transitions at 120×30, and 60 seconds of controller idle CPU. It records launch-to-bridge readiness separately from controller prelaunch overhead. Measurements exclude child redraw and distinguish controller-process CPU from tmux/Pi/Neovim CPU. Performance targets are <250 ms startup p95, <100 ms view transition p95, and <1% controller idle CPU. Results must be recorded, not inferred from passing correctness tests.
+The benchmark samples 20 fresh CLI processes with warm filesystem caches before Pi launch, 40 live-pane transitions at 120×30, and 60 seconds of controller idle CPU. It records launch-to-bridge readiness separately from controller prelaunch overhead. Measurements exclude child redraw and distinguish controller-process CPU from tmux/Pi/Neovim CPU. Performance targets (renegotiated 2026-09-25 from the original single <250 ms startup figure; evidence and rationale in the [release checklist](Release-Checklist.md#renegotiated-startup-targets-2026-09-25)): controller-owned launch overhead <150 ms p95, end-to-end launch-to-bridge <750 ms p95, <100 ms view transition p95, and <1% controller idle CPU. Results must be recorded, not inferred from passing correctness tests.
 
 The normal personal-configuration semantic smoke is separate and can write normal Pi/Neovim runtime state:
 

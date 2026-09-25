@@ -106,3 +106,32 @@ export function toolWritePath(name: string, args: unknown): string | null {
   const path = record.path ?? record.file_path ?? record.filePath;
   return typeof path === "string" && path.length > 0 ? path : null;
 }
+
+/**
+ * Bounded closed-run history for the session timeline panel (plan T-02).
+ * The extension owns run lifecycles and ships this list to the controller
+ * over the existing status payload, mirroring the telemetry-line precedent:
+ * controller-side rendering stays available even while Pi is busy.
+ */
+export interface TimelineEntry {
+  /** Monotonic run index, as shown by the in-pane run ledger. */
+  index: number;
+  /** Wall seconds the run took; null when never closed cleanly. */
+  seconds: number | null;
+  tools: number;
+  failed: number;
+  interrupted: boolean;
+  /** Newest last, as recorded. */
+  toolNames: string[];
+}
+
+export const TIMELINE_LIMIT = 12;
+
+/** Append a closed-run summary, oldest dropped beyond the bound. */
+export function pushTimelineEntry(
+  history: TimelineEntry[],
+  entry: TimelineEntry,
+): TimelineEntry[] {
+  const next = [...history, entry];
+  return next.length > TIMELINE_LIMIT ? next.slice(-TIMELINE_LIMIT) : next;
+}

@@ -11,6 +11,7 @@ import {
 import {
   helpPanelLines,
   statusPanelLines,
+  timelinePanelLines,
   menuEntries,
   menuDisplayArgv,
   isPanelAction,
@@ -339,5 +340,61 @@ describe("panels", () => {
     assert.equal(isPanelAction("status"), true);
     assert.equal(isPanelAction("menu"), true);
     assert.equal(isPanelAction("explode"), false);
+  });
+  it("timeline panel renders bounded rows, live marker and empty state", () => {
+    const plain = (lines: string[]) =>
+      lines.map((l) => stripTerminalSequences(l).trimEnd());
+    const empty = plain(
+      timelinePanelLines({ prefix: "F12", busyNow: false, history: [] }),
+    );
+    assert.match(empty.join("\n"), /no runs yet this session/);
+    const busy = plain(
+      timelinePanelLines({
+        prefix: "F12",
+        busyNow: true,
+        history: [
+          {
+            index: 1,
+            seconds: 5.4,
+            tools: 2,
+            failed: 0,
+            interrupted: false,
+            toolNames: ["read", "bash"],
+          },
+          {
+            index: 2,
+            seconds: 12,
+            tools: 3,
+            failed: 1,
+            interrupted: true,
+            toolNames: [],
+          },
+        ],
+      }),
+    );
+    assert.match(busy.join("\n"), /run 1.*5s.*tools 2.*read bash/);
+    assert.match(busy.join("\n"), /run 2.*12s.*fail 1.*stopped/);
+    assert.match(busy.join("\n"), /live.*running now/);
+    for (const line of busy)
+      assert.ok([...line].length <= 48, `timeline line overflowed: ${line}`);
+    const ascii = plain(
+      timelinePanelLines({ prefix: "F12", busyNow: false, history: [] }, true),
+    );
+    assert.ok(
+      ascii.every((l) =>
+        [...l].every((ch) => (ch.codePointAt(0) ?? 0) <= 0x7f),
+      ),
+      "ascii timeline emitted non-ascii",
+    );
+  });
+  it("menu and help expose the session timeline binding", () => {
+    const entries = menuEntries("F12");
+    const timeline = entries.find((e) => e.intent === "timeline");
+    assert.ok(timeline, "timeline menu entry missing");
+    assert.equal(timeline.key, "t");
+    assert.ok(
+      helpPanelLines("F12", false).some((l) => l.includes("session timeline")),
+    );
+    assert.ok(menuEntries("F12").length <= 8, "tmux menu hard limit is 8");
   });
 });

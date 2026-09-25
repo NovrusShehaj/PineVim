@@ -7,6 +7,7 @@
  */
 import { plain, recoveryCopy } from "../../diagnostics.js";
 import { fit } from "../../piui/glyphs.js";
+import type { TimelineEntry } from "../../piui/runs.js";
 import { sgr, type SgrRole } from "./styled.js";
 import { helperCommand, tmuxQuote } from "./config.js";
 import type { State } from "../../core/state.js";
@@ -60,6 +61,7 @@ export function helpRows(prefix: string): HelpRow[] {
     { key: `${p} r`, action: "retry Pi (if dead)" },
     { key: `${p} q`, action: "safe quit" },
     { key: `${p} s`, action: "workspace status" },
+    { key: `${p} t`, action: "session timeline" },
     { key: `${p} m`, action: "command menu" },
     { key: `${p} ?`, action: "this help" },
     { key: `${p} ${p}`, action: "literal prefix" },
@@ -158,6 +160,64 @@ function nextAction(s: State, facts: StatusFacts, separator: string): string {
 }
 
 /** Render status popup lines from controller-owned state. */
+/** The controller-owned facts the timeline panel renders. */
+export interface TimelineFacts {
+  prefix: string;
+  /** Whether a run is active right now (rendered as a live marker). */
+  busyNow: boolean;
+  /** Newest last, bounded by TIMELINE_LIMIT at the source. */
+  history: TimelineEntry[];
+}
+
+/**
+ * Session timeline: one line per closed run (newest last, matching the
+ * in-pane run ledger's direction), plus the live run when one is active.
+ * Read-only v1 (plan T-02): navigation and per-run drill-down come later.
+ */
+export function timelinePanelLines(
+  facts: TimelineFacts,
+  ascii = false,
+): string[] {
+  const g = panelGlyphs(ascii);
+  const title = `${paint("accent", " PINEVIM ")}${paint("muted", " session timeline")}`;
+  const lines: string[] = [title, panelRule(g)];
+  const rows: { label: string; detail: string; role: SgrRole }[] = [];
+  for (const entry of facts.history)
+    rows.push({
+      label: `run ${entry.index}`,
+      detail:
+        (entry.seconds === null ? "?" : `${Math.round(entry.seconds)}s`) +
+        ` ${g.bullet} tools ${entry.tools}` +
+        (entry.failed ? ` ${g.bullet} fail ${entry.failed}` : "") +
+        (entry.interrupted ? ` ${g.bullet} stopped` : "") +
+        (entry.toolNames.length
+          ? ` ${g.bullet} ${entry.toolNames.slice(0, 3).join(" ")}`
+          : ""),
+      role: entry.failed || entry.interrupted ? "warning" : "text",
+    });
+  if (facts.busyNow)
+    rows.push({
+      label: "live",
+      detail: "running now",
+      role: "accent",
+    });
+  if (rows.length === 0)
+    rows.push({ label: "", detail: "no runs yet this session", role: "muted" });
+  // Detail strings are PineVIM-authored templates plus bounded numbers, so
+  // they bypass plain() (which would mangle the panel's Unicode bullets); the
+  // fit() call still bounds them to the panel width.
+  for (const r of rows.slice(-22))
+    lines.push(
+      `${paint("muted", fit(r.label, 12, g.ellipsis).padEnd(12, " "))}${paint(r.role, fit(r.detail, CONTENT_WIDTH - 13, g.ellipsis))}`,
+    );
+  lines.push(
+    panelRule(g),
+    panelHeading("keys", g),
+    `${paint("muted", prefixLabel(facts.prefix).padEnd(12, " "))}${paint("text", "close with any key")}`,
+  );
+  return lines;
+}
+
 export function statusPanelLines(
   s: State,
   facts: StatusFacts,
@@ -287,6 +347,11 @@ export function menuEntries(
       intent: "agent.toggle",
     },
     { label: `${arrow} Retry Pi (${p} r)`, key: "r", intent: "retry" },
+    {
+      label: `${arrow} Session timeline (${p} t)`,
+      key: "t",
+      intent: "timeline",
+    },
     { label: `${arrow} Workspace status (${p} s)`, key: "s", intent: "status" },
     { label: `${arrow} Key guide (${p} ?)`, key: "?", intent: "help" },
     { label: `${arrow} Safe quit (${p} q)`, key: "q", intent: "quit" },

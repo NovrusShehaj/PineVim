@@ -126,6 +126,9 @@ export default function pinevim(pi: ExtensionAPI): void {
     // Additive telemetry (protocol v1.1): the controller validates strictly,
     // so these are only sent after its schema accepts them.
     ...(pineUi ? { telemetry: pineUi.telemetryLine() } : {}),
+    // Additive session timeline (protocol v1.2): bounded closed-run history
+    // for the controller's F12 t panel, newest last.
+    ...(pineUi ? { timeline: pineUi.timelineLine() } : {}),
   });
   const report = async (): Promise<void> => {
     if (peer && !peer.closed && ctx) {

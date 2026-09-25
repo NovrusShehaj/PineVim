@@ -13,11 +13,52 @@
  *
  * Idempotent and content-checked: files are (re)written only when missing or
  * stale, so concurrent controllers and repeated starts are cheap no-ops.
+ *
+ * The agent directory is resolved locally instead of importing Pi's library:
+ * the import alone cost ~320 ms of module-graph time on every launch
+ * (measured 2026-09-25), which dominated the launch-to-bridge budget. The
+ * resolution mirrors Pi 0.87.1's getAgentDir() exactly — PI_CODING_AGENT_DIR
+ * (tilde-expanded) wins, else <homedir>/<configDir>/agent where configDir
+ * comes from Pi's package.json piConfig block (default ".pi") — and
+ * tests/unit/core.test.ts pins both implementations to agreement so a Pi
+ * change fails CI instead of silently writing themes to the wrong directory.
  */
 import { copyFile, mkdir, readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { homedir } from "node:os";
+import { isAbsolute, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { themeDirectory } from "../piui/theme.js";
+
+const PI_PACKAGE = join(
+  fileURLToPath(new URL(".", import.meta.url)),
+  "../../node_modules/@earendil-works/pi-coding-agent/package.json",
+);
+
+/**
+ * Mirror of Pi 0.87.1's getAgentDir(). Deliberately uncached: it runs once
+ * per launch, and the parity test in tests/unit/core.test.ts mutates the
+ * environment, which a cache would silently ignore.
+ */
+export async function piAgentDir(): Promise<string> {
+  const env = process.env.PI_CODING_AGENT_DIR;
+  if (env) {
+    return env.startsWith("~/")
+      ? join(homedir(), env.slice(2))
+      : env === "~"
+        ? homedir()
+        : env;
+  }
+  let configDir = ".pi";
+  try {
+    const pkg = JSON.parse(await readFile(PI_PACKAGE, "utf8")) as {
+      piConfig?: { configDir?: string };
+    };
+    if (pkg.piConfig?.configDir) configDir = pkg.piConfig.configDir;
+  } catch {
+    // Unreadable package metadata falls back to Pi's documented default.
+  }
+  return join(homedir(), configDir, "agent");
+}
 
 /**
  * Copy every bundled PineVIM theme into Pi's user themes dir.
@@ -28,9 +69,10 @@ import { themeDirectory } from "../piui/theme.js";
  */
 export async function installThemesToPi(): Promise<string | null> {
   try {
-    const destDir = join(getAgentDir(), "themes");
+    const destDir = join(await piAgentDir(), "themes");
     await mkdir(destDir, { recursive: true });
     const srcDir = themeDirectory();
+    if (!isAbsolute(srcDir)) return null;
     const files = (await readdir(srcDir)).filter((f) => f.endsWith(".json"));
     for (const file of files) {
       const src = join(srcDir, file);

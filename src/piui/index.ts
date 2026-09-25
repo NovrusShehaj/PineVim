@@ -34,6 +34,7 @@ import { telemetryLine as telemetryLineOf } from "./lifecycle.js";
 import { formatChangeSummary, worktreeNumstat } from "./changes.js";
 import {
   initialRun,
+  pushTimelineEntry,
   runClose,
   runPath,
   runStart,
@@ -41,6 +42,7 @@ import {
   runTools,
   toolWritePath,
   type RunState,
+  type TimelineEntry,
 } from "./runs.js";
 import { titleBrand } from "./logo.js";
 import { headerFactory } from "./components/header.js";
@@ -116,6 +118,8 @@ export class PiUi {
   private abortSignal: AbortSignal | null = null;
   private run: RunState = initialRun();
   lastSummary: RunSummaryData | null = null;
+  /** Bounded closed-run history for the controller's timeline panel. */
+  private timeline: TimelineEntry[] = [];
   /** Fired when lifecycle text changes. The extension coalesces bridge reports. */
   onTelemetry: (() => void) | null = null;
 
@@ -430,6 +434,14 @@ export class PiUi {
         this.run = closed.state;
         const summary = closed.summary;
         if (summary) {
+          this.timeline = pushTimelineEntry(this.timeline, {
+            index: summary.index,
+            seconds: summary.seconds,
+            tools: summary.tools,
+            failed: summary.failed,
+            interrupted: summary.interrupted,
+            toolNames: summary.toolNames,
+          });
           void worktreeNumstat(ctx.cwd).then((worktree) => {
             const data: RunSummaryData = {
               index: summary.index,
@@ -502,6 +514,33 @@ export class PiUi {
   /** Controller-visible telemetry line for the bridge status report. */
   telemetryLine(): string {
     return telemetryLineOf(this.state, this.lastCtxPercent);
+  }
+
+  /**
+   * Controller-visible session timeline for the F12 t panel: one
+   * `index|seconds|tools|failed|stop|names` record per closed run,
+   * `;`-joined, newest last. Values are bounded integers/names per the
+   * protocol validator; empty string when nothing has closed yet.
+   */
+  timelineLine(): string {
+    return this.timeline
+      .map((r) => {
+        const names = r.toolNames
+          .slice(0, 6)
+          .join(" ")
+          .toLowerCase()
+          .replace(/[^a-z0-9 -]/g, "")
+          .slice(0, 60);
+        return [
+          r.index,
+          r.seconds === null ? "" : Math.round(r.seconds),
+          r.tools,
+          r.failed,
+          r.interrupted ? 1 : 0,
+          names,
+        ].join("|");
+      })
+      .join(";");
   }
 
   dispose(): void {

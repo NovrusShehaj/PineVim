@@ -23,7 +23,7 @@ export function helperCommand(
   nonce?: string,
 ): string {
   if (
-    !/^(ide.open|chat|agent.toggle|focus.other|width.less|width.more|quit|retry|help|status|resize|layout|focus|death|detach|confirm-quit|confirm-retry|popup)$/.test(
+    !/^(ide.open|chat|agent.toggle|focus.other|width.less|width.more|quit|retry|help|status|timeline|resize|layout|focus|death|detach|confirm-quit|confirm-retry|popup)$/.test(
       action,
     ) ||
     (nonce !== undefined && !/^[a-f0-9-]{36}$/.test(nonce))

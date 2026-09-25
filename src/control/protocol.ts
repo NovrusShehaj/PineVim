@@ -79,6 +79,7 @@ export function parseRecord(line: string): RecordMessage {
       "sessionFile",
       "busy",
       "telemetry",
+      "timeline",
     ],
     intent: ["intent"],
     status: [
@@ -89,6 +90,7 @@ export function parseRecord(line: string): RecordMessage {
       "pinevim",
       "cwd",
       "telemetry",
+      "timeline",
     ],
     event: ["event"],
     shutdown: ["cancel"],
@@ -165,6 +167,16 @@ export function parseRecord(line: string): RecordMessage {
       typeof p.pinevim === "boolean" &&
       (p.sessionId === null || text(p.sessionId, 256)) &&
       (p.sessionFile === null || text(p.sessionFile));
+  }
+  // Additive session timeline (v1.2): `idx|seconds|tools|failed|stop|names`
+  // per closed run, `;`-joined, newest last; empty string means no closed
+  // runs. Strictly bounded so the controller renders none of it unfiltered.
+  if (p.timeline !== undefined) {
+    if (
+      !text(p.timeline, 2048) ||
+      !/^[0-9;.|a-z -]*$/.test(p.timeline as string)
+    )
+      valid = false;
   }
   if (
     p.generation !== undefined &&

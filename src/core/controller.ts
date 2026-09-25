@@ -9,8 +9,42 @@ import {
   statusOptionValue,
   type AgentTelemetry,
 } from "../adapters/tmux/statusline.js";
-import { helpPanelLines, statusPanelLines } from "../adapters/tmux/panels.js";
+import {
+  helpPanelLines,
+  statusPanelLines,
+  timelinePanelLines,
+} from "../adapters/tmux/panels.js";
 import { parseTelemetryLine } from "../piui/lifecycle.js";
+import type { TimelineEntry } from "../piui/runs.js";
+
+/**
+ * Parse the bridge's bounded timeline payload (validated by the protocol
+ * schema before this runs). Malformed entries are dropped, never rendered.
+ */
+function parseTimeline(line: string): TimelineEntry[] {
+  return line
+    .split(";")
+    .filter(Boolean)
+    .flatMap((record) => {
+      const [idx, seconds, tools, failed, stopped, names] = record.split("|");
+      const index = Number(idx);
+      if (!Number.isSafeInteger(index) || index <= 0) return [];
+      return [
+        {
+          index,
+          seconds:
+            seconds === undefined || seconds === ""
+              ? null
+              : Math.max(0, Number(seconds) || 0),
+          tools: Math.max(0, Number(tools) || 0),
+          failed: Math.max(0, Number(failed) || 0),
+          interrupted: stopped === "1",
+          toolNames: (names ?? "").split(" ").filter(Boolean).slice(0, 6),
+        },
+      ];
+    })
+    .slice(-12);
+}
 import { installThemesToPi } from "./theme-install.js";
 import { piCommand } from "../adapters/pi/adapter.js";
 import { ControlServer, type ClientIdentity } from "../control/server.js";
@@ -76,6 +110,8 @@ export class AppController {
   private slash = { ide: false, pinevim: false };
   /** Decoded bridge telemetry; null when the bridge is down. */
   private telemetry: AgentTelemetry | null = null;
+  /** Closed-run history reported by the bridge; empty when unavailable. */
+  private timeline: TimelineEntry[] = [];
   private themesCopied = false;
   private welcome = false;
   onStop: (message: string) => void = () => {};
@@ -322,6 +358,10 @@ export class AppController {
     // the controller falls back to the busy bit for the status line.
     this.telemetry =
       typeof p.telemetry === "string" ? parseTelemetryLine(p.telemetry) : null;
+    // Additive timeline (v1.2): parse only after the protocol validator has
+    // bounded the string; malformed entries are dropped, not rendered.
+    this.timeline =
+      typeof p.timeline === "string" ? parseTimeline(p.timeline) : [];
   }
   intent(intent: Intent): Promise<Record<string, unknown>> {
     return this.enqueue(() => this.dispatch(intent));
@@ -336,6 +376,10 @@ export class AppController {
     try {
       await this.reconcile(intent === "reconcile");
       if (this.stopped) return {};
+      if (intent === "timeline") {
+        await this.showPanel("timeline");
+        return { message: "PineVim session timeline shown in a popup." };
+      }
       if (intent === "status" || intent === "help") {
         // Panels replace the legacy one-line help/status toasts.
         // The intent still returns the legacy message so slash replies keep
@@ -636,10 +680,24 @@ export class AppController {
   }
 
   /** Show a help/status popup; falls back to a plain toast on failure. */
-  private async showPanel(kind: "help" | "status"): Promise<void> {
+  private async showPanel(kind: "help" | "status" | "timeline"): Promise<void> {
     const ascii = this.config.ui.glyphs === "ascii";
     try {
-      if (kind === "help") {
+      if (kind === "timeline") {
+        await this.tmux.popup(
+          timelinePanelLines(
+            {
+              prefix: this.config.prefix,
+              busyNow: this.state.busy,
+              history: this.timeline,
+            },
+            ascii,
+          ),
+          70,
+          process.execPath,
+          helper,
+        );
+      } else if (kind === "help") {
         await this.tmux.popup(
           helpPanelLines(this.config.prefix, ascii),
           70,

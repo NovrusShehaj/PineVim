@@ -78,10 +78,21 @@ export class Tmux {
       ...argv,
     );
     // Child-facing UI flags ride the server-global environment; every value is
-    // a bounded PineVIM-authored token, not user input.
-    for (const [key, value] of Object.entries(childEnv))
-      await this.command("set-environment", "-g", key, value);
-    await this.command("set-option", "-g", "@pinevim-instance", instance);
+    // a bounded PineVIM-authored token, not user input. Chained into one
+    // tmux round trip with the instance option (subprocess overhead per
+    // invocation dominated start latency).
+    const envCommands = Object.entries(childEnv).map(([key, value]) => [
+      "set-environment",
+      "-g",
+      key,
+      value,
+    ]);
+    await this.command(
+      ...[
+        ["set-option", "-g", "@pinevim-instance", instance],
+        ...envCommands,
+      ].flatMap((c, i) => (i ? [";", ...c] : c)),
+    );
     const found = (await this.inventory()).find((p) => p.pane === pane);
     if (!found)
       throw new PineError("TMUX", "Pi pane creation could not be reconciled.");
@@ -156,6 +167,9 @@ export class Tmux {
     prefix: string,
     ascii = false,
   ): Promise<void> {
+    // One tmux round trip: 16 separate bind-key/set-hook invocations cost
+    // ~9-20 ms of subprocess overhead each and dominate controller start.
+    const commands: string[][] = [];
     for (const [key, intent] of Object.entries({
       i: "ide.open",
       c: "chat",
@@ -166,9 +180,10 @@ export class Tmux {
       q: "quit",
       r: "retry",
       s: "status",
+      t: "timeline",
       "?": "help",
     }))
-      await this.command(
+      commands.push([
         "bind-key",
         "-T",
         "prefix",
@@ -176,15 +191,15 @@ export class Tmux {
         "run-shell",
         "-b",
         helperCommand(node, helper, this.runtime, intent),
-      );
-    await this.command("bind-key", "-T", "prefix", prefix, "send-prefix");
-    await this.command(
+      ]);
+    commands.push(["bind-key", "-T", "prefix", prefix, "send-prefix"]);
+    commands.push([
       "bind-key",
       "-T",
       "prefix",
       "m",
       ...menuDisplayArgv(node, helper, this.runtime, prefix, ascii),
-    );
+    ]);
     for (const [hook, event] of Object.entries({
       "client-resized": "resize",
       "window-layout-changed": "layout",
@@ -192,12 +207,13 @@ export class Tmux {
       "pane-died": "death",
       "client-detached": "detach",
     }))
-      await this.command(
+      commands.push([
         "set-hook",
         "-g",
         hook,
         `run-shell -b ${tmuxQuote(helperCommand(node, helper, this.runtime, event))}`,
-      );
+      ]);
+    await this.command(...commands.flatMap((c, i) => (i ? [";", ...c] : c)));
   }
   async createEditor(
     target: string,

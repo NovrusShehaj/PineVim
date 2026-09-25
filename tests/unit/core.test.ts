@@ -40,6 +40,7 @@ import {
 } from "../../src/persistence.js";
 import { defaults } from "../../src/config.js";
 import { newMetadata } from "../../src/core/controller.js";
+import { piAgentDir } from "../../src/core/theme-install.js";
 import type { SlashCommandInfo } from "@earendil-works/pi-coding-agent";
 const living = (pane: string, pid: number) => ({
   pane,
@@ -182,6 +183,45 @@ test("ui.confirm policy defaults, parses and rejects without echoing", () => {
       () => validateConfig(bad),
       (e) => e instanceof Error && !String(e).includes("CANARY"),
     );
+});
+test("pi agent-dir resolution matches Pi's getAgentDir", async () => {
+  // The controller avoids importing Pi's library (module-graph cost); this
+  // pin fails if Pi changes its resolution and PineVim would write themes
+  // to the wrong directory.
+  const { getAgentDir } = await import("@earendil-works/pi-coding-agent");
+  process.env.PI_CODING_AGENT_DIR = join("~", "pin-agent");
+  assert.equal(await piAgentDir(), getAgentDir());
+  process.env.PI_CODING_AGENT_DIR = "/abs/pin-agent";
+  assert.equal(await piAgentDir(), getAgentDir());
+  delete process.env.PI_CODING_AGENT_DIR;
+  const { homedir } = await import("node:os");
+  assert.equal(join(homedir(), ".pi", "agent"), getAgentDir());
+});
+test("timeline payload validates, parses and drops malformed entries", () => {
+  const record = (timeline: unknown) =>
+    JSON.stringify({
+      version: 1,
+      requestId: "id",
+      generation: 1,
+      epoch: "epoch",
+      type: "status",
+      payload: {
+        cwd: "/w",
+        busy: false,
+        ide: false,
+        pinevim: true,
+        sessionId: null,
+        sessionFile: null,
+        timeline,
+      },
+    }) + "\n";
+  // Well-formed payload passes the protocol validator.
+  const parsed = parseRecord(record("1|5|2|0|0|read bash;2|12|3|1|1|edit"));
+  assert.equal(parsed.type, "status");
+  // Uppercase is outside the bounded vocabulary -> whole payload rejected.
+  assert.throws(() => parseRecord(record("1|5|2|0|0|READ")));
+  // Oversized payload is rejected.
+  assert.throws(() => parseRecord(record("1|".repeat(4096))));
 });
 test("config rejects secret fields, shell commands, invalid enums without echo", () => {
   for (const input of [
