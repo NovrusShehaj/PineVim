@@ -20,7 +20,17 @@ export type GlyphKey =
   | "queued"
   | "rule"
   | "rail"
-  | "error";
+  | "error"
+  // D10: extended vocabulary (state, not decoration). Every glyph has an
+  // ASCII fallback and carries or sits beside a label.
+  | "compacted"
+  | "forked"
+  | "edited"
+  | "cached"
+  | "parallel"
+  | "agent"
+  | "pine"
+  | "frame";
 
 export interface GlyphSet {
   user: string;
@@ -37,24 +47,42 @@ export interface GlyphSet {
   rule: string;
   rail: string;
   error: string;
+  // D10
+  compacted: string;
+  forked: string;
+  edited: string;
+  cached: string;
+  parallel: string;
+  agent: string;
+  pine: string;
+  frame: string;
 }
 
 /** Full-width Unicode set (default). */
 export const UNICODE: GlyphSet = {
-  user: "›",
-  running: "●",
-  success: "✓",
-  failure: "✗",
-  warning: "▲",
-  interrupted: "⏸",
+  user: "\u203a", // ›
+  running: "\u25cf", // ●
+  success: "\u2713", // ✓
+  failure: "\u2717", // ✗
+  warning: "\u25b2", // ▲
+  interrupted: "\u23f8", // ⏸
   waiting: "?",
-  compacting: "⌁",
-  thinking: "◦",
-  stopped: "■",
-  queued: "⇅",
-  rule: "─",
-  rail: "│",
-  error: "✗",
+  compacting: "\u2301", // ⌁
+  thinking: "\u25e6", // ◦
+  stopped: "\u25a0", // ■
+  queued: "\u21c5", // ⇅
+  rule: "\u2500", // ─
+  rail: "\u2502", // │
+  error: "\u2717", // ✗
+  // D10
+  compacted: "\u2302", // ⌂
+  forked: "\u2443", // ⑃
+  edited: "\u270e", // ✎
+  cached: "\u21bb", // ↻
+  parallel: "\u2af6", // ⫶
+  agent: "\u25b2", // ▲ (brand mark)
+  pine: "\u2310", // ⌐
+  frame: "\u25cc", // ◌
 };
 
 /** ASCII fallback: same vocabulary, terminal-safe everywhere. */
@@ -73,6 +101,15 @@ export const ASCII: GlyphSet = {
   rule: "-",
   rail: "|",
   error: "x",
+  // D10
+  compacted: "c",
+  forked: "f",
+  edited: "~",
+  cached: "@",
+  parallel: "&",
+  agent: "^",
+  pine: "+",
+  frame: "o",
 };
 
 export type GlyphMode = "unicode" | "ascii";

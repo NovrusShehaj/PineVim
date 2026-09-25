@@ -5,6 +5,7 @@ import {
   UNICODE,
   fit,
   glyphs,
+  type GlyphSet,
   WORK_FRAMES_ASCII,
   WORK_FRAMES_UNICODE,
 } from "../../src/piui/glyphs.js";
@@ -1470,6 +1471,40 @@ describe("frame surfaces", () => {
     assert.equal(high?.role, "error");
     assert.equal(mid?.role, "warning");
     assert.equal(low?.role, "muted");
+  });
+  it("D10: glyph set exposes 8 new state glyphs with ASCII fallbacks", () => {
+    const newKeys: Array<keyof GlyphSet> = [
+      "compacted",
+      "forked",
+      "edited",
+      "cached",
+      "parallel",
+      "agent",
+      "pine",
+      "frame",
+    ];
+    for (const key of newKeys) {
+      const u = UNICODE[key];
+      const a = ASCII[key];
+      assert.ok(typeof u === "string" && u.length > 0, `${key} unicode empty`);
+      assert.ok(typeof a === "string" && a.length > 0, `${key} ascii empty`);
+      assert.ok(
+        [...a].every((ch) => (ch.codePointAt(0) ?? 0) <= 0x7f),
+        `${key} ascii fallback is not 7-bit`,
+      );
+    }
+    // Brand mark `agent` in ASCII is the same as the existing agent mark.
+    assert.equal(ASCII.agent, "^");
+  });
+  it("D10: mono-safe property — every glyph renders 7-bit in ASCII mode", () => {
+    const everyGlyph = Object.keys(UNICODE) as Array<keyof GlyphSet>;
+    for (const key of everyGlyph) {
+      const a = ASCII[key];
+      assert.ok(
+        [...a].every((ch) => (ch.codePointAt(0) ?? 0) <= 0x7f),
+        `${key} ASCII fallback is not 7-bit`,
+      );
+    }
   });
 });
 
