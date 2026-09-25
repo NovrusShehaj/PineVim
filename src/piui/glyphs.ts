@@ -92,10 +92,11 @@ export const WORK_FRAMES_ASCII = ["*", ">", ">", ">"] as const;
  * double-width runs is not required because every chrome line ends in a label,
  * never mid-token data.
  */
-export function fit(value: string, maxCells: number): string {
+export function fit(value: string, maxCells: number, ellipsis = "…"): string {
   if (maxCells <= 0) return "";
   const points = [...value];
   if (points.length <= maxCells) return value;
-  const keep = Math.max(0, maxCells - 1);
-  return points.slice(0, keep).join("") + "…";
+  const marker = [...ellipsis];
+  if (marker.length >= maxCells) return marker.slice(0, maxCells).join("");
+  return points.slice(0, maxCells - marker.length).join("") + ellipsis;
 }
