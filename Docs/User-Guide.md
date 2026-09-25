@@ -13,6 +13,13 @@ help`. On a first-ever launch the welcome includes the full ASCII pine motif;
 subsequent launches show a single-line chip. Set `PINEVIM_WELCOME=0` in the
 environment to silence the welcome entirely.
 
+When you run `/ide` (or `F12 i`), Neovim is launched as `nvim .` in the
+**workspace cwd** — the directory PineVim was invoked from (or the first
+positional argument to `pinevim`). This opens the project's file tree
+instead of the nvim homescreen, so you land in the project you're
+already in. To open a different directory instead, launch PineVim with
+the directory as its first argument: `pinevim ~/code/myproject`.
+
 The tmux status line (bottom of the terminal) starts with `▲ pinevim ·` (or
 `^ pinevim ·` in ASCII mode), then your workspace name, the active view (CHAT /
 IDE editor / IDE agent), and the agent lifecycle. The status line is themed by

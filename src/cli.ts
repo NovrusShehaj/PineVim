@@ -15,7 +15,8 @@ export const HELP = `PineVim — interactive Pi with your normal Neovim in priva
 Usage: pinevim [directory] | pinevim --resume [directory]
        pinevim --help | pinevim --version
 
-/ide opens/reveals Neovim; /ide close hides it while it keeps running.
+/ide opens Neovim in the workspace cwd (nvim .); /ide close hides it
+while it keeps running.
 /pinevim agent hide|show, chat, status, help, quit
 F12 then i IDE, c chat, a agent, Tab focus, Left/Right width, r retry,
 q safe quit, ? help. F12 twice sends literal F12. Letters are lowercase.

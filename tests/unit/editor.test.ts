@@ -32,7 +32,12 @@ describe("editor theme", () => {
         "-u",
         "NVIM_LISTEN_ADDRESS",
       ]);
-      assert.equal(argv.at(-1), "lua require('pinevim').arm()");
+      // argv order: --cmd rtp, --cmd lua arm(), then `.` (open cwd).
+      const luaIdx = argv.indexOf("lua require('pinevim').arm()");
+      assert.ok(luaIdx >= 0);
+      assert.equal(argv[luaIdx - 1], "--cmd");
+      assert.equal(argv[luaIdx + 1], ".");
+      assert.equal(argv.at(-1), ".");
       assert.equal(argv.includes("--listen"), false);
       const lua = await readFile(
         join(editorRuntimePath(runtime), "lua", "pinevim", "init.lua"),
@@ -45,6 +50,30 @@ describe("editor theme", () => {
       assert.match(lua, /PmenuMatch/);
       assert.match(lua, /MsgArea/);
       assert.equal(lua.includes(":edit"), false);
+    } finally {
+      await rm(runtime, { recursive: true, force: true });
+    }
+  });
+
+  it("/ide opens nvim in the workspace cwd (trailing '.' argument)", async () => {
+    const runtime = await mkdtemp(join(tmpdir(), "pv-editor-"));
+    try {
+      const argv = await editorCommand(process.execPath, runtime);
+      // The last argument must be '.' so nvim opens the current directory
+      // (set by tmux split-window -c <workspace>) instead of the homescreen.
+      assert.equal(argv.at(-1), ".");
+      // It must come AFTER the --cmd lua require('pinevim').arm() so the
+      // brand layer is armed before the buffer list renders.
+      assert.ok(
+        argv.indexOf(".") > argv.indexOf("lua require('pinevim').arm()"),
+        "'.' must come after the brand-arm lua call",
+      );
+      // And before any user-defined positional; there are none in our argv.
+      // No flags should appear after '.': a flag after the cwd would not
+      // apply to the file being opened.
+      const dot = argv.indexOf(".");
+      const prev = argv[dot - 1];
+      assert.ok(prev !== undefined && !prev.startsWith("--"));
     } finally {
       await rm(runtime, { recursive: true, force: true });
     }

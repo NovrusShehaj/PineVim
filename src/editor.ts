@@ -51,6 +51,9 @@ export async function editorCommand(
   const root = editorRuntimePath(runtime);
   await writeLuaModules(root);
   // Unset remote-editor markers only for this child, preserving intentional NVIM_APPNAME.
+  // The trailing `.` opens the current working directory (set by tmux
+  // `split-window -c <workspace>` in createEditor) instead of the nvim
+  // homescreen — see cli.ts workspacePath() = args.positionals[0] ?? cwd.
   return [
     "/usr/bin/env",
     "-u",
@@ -62,5 +65,6 @@ export async function editorCommand(
     editorVimCommand(root),
     "--cmd",
     "lua require('pinevim').arm()",
+    ".",
   ];
 }
