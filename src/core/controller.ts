@@ -7,6 +7,7 @@ import { Tmux, type Pane } from "../adapters/tmux/client.js";
 import { Coalescer } from "../adapters/tmux/events.js";
 import {
   statusOptionValue,
+  paletteForStatus,
   type AgentTelemetry,
 } from "../adapters/tmux/statusline.js";
 import {
@@ -632,13 +633,19 @@ export class AppController {
   }
   private async renderStatus(): Promise<void> {
     const s = this.state;
-    const styled = statusOptionValue({
-      state: s,
-      workspace: this.metadata.display,
-      prefix: this.config.prefix,
-      telemetry: s.bridge ? this.telemetry : null,
-      ascii: this.config.ui.glyphs === "ascii",
-    });
+    const palette = paletteForStatus(this.config.ui.theme, this.config.ui.glyphs === "ascii");
+    const styled = statusOptionValue(
+      {
+        state: s,
+        workspace: this.metadata.display,
+        prefix: this.config.prefix,
+        telemetry: s.bridge ? this.telemetry : null,
+        ascii: this.config.ui.glyphs === "ascii",
+        theme: this.config.ui.theme,
+      },
+      true,
+      palette,
+    );
     if (styled !== this.lastStatus) {
       await this.tmux.status(styled);
       this.lastStatus = styled;

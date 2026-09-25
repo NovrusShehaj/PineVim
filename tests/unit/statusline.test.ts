@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   statusLine,
   statusOptionValue,
+  paletteForStatus,
 } from "../../src/adapters/tmux/statusline.js";
 import {
   escapeTmuxFormat,
@@ -208,6 +209,57 @@ describe("status line", () => {
     );
     assert.equal(value.includes("#["), false);
     assert.match(value, /\* agent/);
+  });
+  it("brand mark is the first segment in the default status line", () => {
+    const line = statusLine({
+      state: liveState(),
+      workspace: "/tmp/ws",
+      prefix: "F12",
+      telemetry: null,
+      ascii: true,
+    });
+    const bare = stripTerminalSequences(line);
+    // ASCII mark is "^"; wordmark is "pinevim". Order matters.
+    const brandIdx = bare.indexOf("^ pinevim");
+    const projIdx = bare.indexOf("ws");
+    assert.ok(brandIdx >= 0, "brand mark missing");
+    assert.ok(brandIdx < projIdx, "brand must come before workspace");
+  });
+  it("brand survives in the panic state (resize guidance)", () => {
+    const s = initialState({ columns: 50, rows: 12 }, "e", null);
+    const line = statusLine({
+      state: s,
+      workspace: "/tmp/ws",
+      prefix: "F12",
+      telemetry: null,
+      ascii: true,
+    });
+    const bare = stripTerminalSequences(line);
+    assert.match(bare, /\^ pinevim/);
+    assert.match(bare, /resize to 60x16/);
+  });
+  it("theme palette resolves per-theme accent color", () => {
+    const forest = paletteForStatus("pinevim-forest", true);
+    const mono = paletteForStatus("pinevim-mono", true);
+    assert.equal(forest.accent, "green");
+    assert.equal(mono.accent, "white");
+  });
+  it("theme-aware palette affects rendered accent fg token", () => {
+    const palette = paletteForStatus("pinevim-snow", false);
+    const line = statusLine(
+      {
+        state: liveState(),
+        workspace: "/tmp/ws",
+        prefix: "F12",
+        telemetry: null,
+        ascii: false,
+        theme: "pinevim-snow",
+      },
+      true,
+      palette,
+    );
+    // pinevim-snow accent maps to "blue"; verify the brand uses it.
+    assert.match(line, /#\[fg=blue\]/);
   });
 });
 

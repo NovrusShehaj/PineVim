@@ -49,10 +49,23 @@ const TMUX_COLOUR: Record<Exclude<SgrRole, "reset">, string> = {
   text: "default",
 };
 
-/** Wrap trusted text in a tmux status style, or return it unchanged. */
-export function tmuxFg(role: SgrRole, text: string, color = true): string {
+/**
+ * Wrap trusted text in a tmux status style, or return it unchanged.
+ * Pass `palette` to use the active PineVim theme's tmux colors (D1);
+ * falls back to the legacy hard-coded palette when omitted.
+ */
+export function tmuxFg(
+  role: SgrRole,
+  text: string,
+  color = true,
+  palette?: { accent?: string } | null,
+): string {
   if (!color || role === "reset") return text;
-  return `#[fg=${TMUX_COLOUR[role]}]${text}#[default]`;
+  const colorName =
+    palette && role === "accent" && palette.accent
+      ? palette.accent
+      : TMUX_COLOUR[role];
+  return `#[fg=${colorName}]${text}#[default]`;
 }
 
 /**
