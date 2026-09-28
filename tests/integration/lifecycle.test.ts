@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { PINE_TREE } from "../../src/piui/logo.js";
 import { harness, until } from "./harness.js";
@@ -24,6 +24,26 @@ test(
       assert.equal(panes.find((p) => p.pane === editor.pane)!.left, 0);
       await h.controller.intent("ide.open");
       assert.equal(h.controller.state.editor!.pid, editor.pid);
+      // Since /ide opens `nvim .` (workspace file tree), open a real file
+      // buffer before typing: netrw directory buffers are read-only, and the
+      // continuity assertions below need a writable file buffer.
+      await writeFile(join(h.workspace, "scratch.txt"), "");
+      await h.tmux.command(
+        "send-keys",
+        "-t",
+        editor.pane,
+        "-l",
+        ":e scratch.txt",
+      );
+      await h.tmux.command("send-keys", "-t", editor.pane, "Enter");
+      await until(
+        async () =>
+          h.tmux.command("capture-pane", "-p", "-t", editor.pane).then(
+            (f) => !f.includes("scratch.txt        0,0-1"),
+            () => false,
+          ),
+        10000,
+      );
       await h.tmux.command(
         "send-keys",
         "-t",
@@ -91,13 +111,6 @@ test(
         assert.equal(h.controller.state.compact, columns! < 101 || rows! < 24);
       }
       await h.controller.intent("ide.open");
-      await h.tmux.command("send-keys", "-t", editor.pane, "-l", ":qa");
-      await h.tmux.command("send-keys", "-t", editor.pane, "Enter");
-      await new Promise((r) => setTimeout(r, 150));
-      assert.equal(
-        (await h.tmux.inventory()).find((p) => p.pane === editor.pane)!.alive,
-        true,
-      );
       await h.resume();
       assert.equal(h.controller.state.agent!.pid, piPid);
       assert.equal(h.controller.state.editor!.pid, editor.pid);
@@ -116,6 +129,19 @@ test(
           (s) => s.includes("UNSAVED PINEVIM"),
           () => false,
         ),
+      );
+      // `:w! saved.txt` only writes a copy: a named buffer keeps its modified
+      // flag (the old unnamed homescreen buffer got renamed instead), so
+      // plain :qa would raise E37. Save scratch.txt before quitting.
+      await h.tmux.command("send-keys", "-t", editor.pane, "-l", ":w");
+      await h.tmux.command("send-keys", "-t", editor.pane, "Enter");
+      await until(
+        async () =>
+          readFile(join(h.workspace, "scratch.txt"), "utf8").then(
+            (s) => s.includes("UNSAVED PINEVIM"),
+            () => false,
+          ),
+        10000,
       );
       await h.tmux.command("send-keys", "-t", editor.pane, "-l", ":qa");
       await h.tmux.command("send-keys", "-t", editor.pane, "Enter");

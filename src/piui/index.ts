@@ -33,6 +33,8 @@ import {
 import { telemetryLine as telemetryLineOf } from "./lifecycle.js";
 import { formatChangeSummary, worktreeNumstat } from "./changes.js";
 import {
+  addTurnUsage,
+  initialBudget,
   initialRun,
   pushTimelineEntry,
   runClose,
@@ -43,6 +45,7 @@ import {
   toolWritePath,
   type RunState,
   type TimelineEntry,
+  type TokenBudget,
 } from "./runs.js";
 import { titleBrand } from "./logo.js";
 import { headerFactory } from "./components/header.js";
@@ -122,6 +125,8 @@ export class PiUi {
   lastSummary: RunSummaryData | null = null;
   /** Bounded closed-run history for the controller's timeline panel. */
   private timeline: TimelineEntry[] = [];
+  /** Session-cumulative token/cost totals for the deck's budget chip. */
+  private budget: TokenBudget = initialBudget();
   /** Fired when lifecycle text changes. The extension coalesces bridge reports. */
   onTelemetry: (() => void) | null = null;
 
@@ -192,9 +197,7 @@ export class PiUi {
             ],
           }
         : {
-            lines: [
-              `${brand} pinevim · type to work · ${prefix} ? keys`,
-            ],
+            lines: [`${brand} pinevim · type to work · ${prefix} ? keys`],
           };
       this.pi.appendEntry<WelcomeData>(WELCOME_TYPE, welcome);
     }
@@ -281,6 +284,7 @@ export class PiUi {
       lifecycle: this.state,
       ctxPercent: this.lastCtxPercent,
       ctxHistory: this.ctxHistory,
+      tokens: this.budget,
       model: this.ctx.model?.name ?? null,
       thinking: this.ctx.thinkingLevel ?? null,
       prefix: process.env.PINEVIM_UI_PREFIX || "F12",
@@ -441,7 +445,15 @@ export class PiUi {
     this.unsubs.push(
       pi.on("turn_end", (e, ctx) => {
         this.state = lifecycle.turnEnd(this.state, e);
-        const message = e.message as { stopReason?: string } | undefined;
+        const message = e.message as
+          | {
+              stopReason?: string;
+              usage?: {
+                totalTokens?: unknown;
+                cost?: { total?: unknown } | null;
+              };
+            }
+          | undefined;
         const interrupted =
           message?.stopReason === "aborted" || this.state.aborted;
         this.run = runTools(
@@ -450,6 +462,9 @@ export class PiUi {
           this.state.toolsFailed,
           interrupted,
         );
+        // T-03: accumulate the settled turn's usage into the session budget.
+        if (message && !interrupted)
+          this.budget = addTurnUsage(this.budget, message.usage);
         this.ctx = ctx;
         this.refresh();
       }),

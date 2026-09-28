@@ -16,6 +16,7 @@ import { style, strong, surface } from "../style.js";
 import { type LifecycleState } from "../lifecycle.js";
 import {
   branchChip,
+  budgetChip,
   contextGauge,
   contextSparkline,
   modelChip,
@@ -23,6 +24,7 @@ import {
   thinkingChip,
   type Chip,
 } from "../chips.js";
+import type { TokenBudget } from "../runs.js";
 
 export interface DeckInfo {
   /** Kept in the data shape for status/focus updates; the deck does not render it. */
@@ -30,6 +32,8 @@ export interface DeckInfo {
   ctxPercent: number | null;
   /** D4: bounded ring buffer of recent ctx% values for the sparkline. */
   ctxHistory?: number[];
+  /** T-03: session-cumulative token/cost totals; chip hidden until first turn settles. */
+  tokens?: TokenBudget | null;
   model: string | null;
   thinking: string | null;
   prefix: string;
@@ -66,6 +70,7 @@ export class PineDeck extends Container {
         : contextGauge(i.ctxPercent, width >= 100 ? 10 : 6, i.ascii);
     const chips: (Chip | null)[] = [
       ctxChip,
+      budgetChip(i.tokens, i.ascii),
       modelChip(i.model, i.ascii),
       thinkingChip(i.thinking, i.ascii),
       branchChip(this.branch, i.ascii),

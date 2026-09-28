@@ -6,6 +6,7 @@
 import type { GlyphSet } from "./glyphs.js";
 import { fit } from "./glyphs.js";
 import { lifecycleLabel, type LifecycleState } from "./lifecycle.js";
+import { budgetChipText, type TokenBudget } from "./runs.js";
 
 /** A styled chip: text carries meaning, style carries emphasis. */
 export interface Chip {
@@ -121,6 +122,20 @@ export function modelChip(
     text: `model ${fit(model, 18, ascii ? "..." : "…")}`,
     role: "muted",
   };
+}
+
+/**
+ * Session-cumulative token/cost chip (plan T-03). Uses `·` before the cost
+ * figure; ASCII mode swaps it for `-` so the chip stays one cell per char.
+ */
+export function budgetChip(
+  budget: TokenBudget | null | undefined,
+  ascii = false,
+): Chip | null {
+  if (!budget) return null;
+  const text = budgetChipText(budget);
+  if (!text) return null;
+  return { text: ascii ? text.replace("\u00b7", "-") : text, role: "muted" };
 }
 
 /** Git branch is environment context, so it belongs in the footer deck. */

@@ -135,3 +135,64 @@ export function pushTimelineEntry(
   const next = [...history, entry];
   return next.length > TIMELINE_LIMIT ? next.slice(-TIMELINE_LIMIT) : next;
 }
+
+/**
+ * Session-cumulative token budget (plan T-03). Accumulated from turn usage
+ * so the deck can show spend alongside the context sparkline. Bounded to
+ * stay finite across very long sessions; tokens are monotonic per session,
+ * so the bound only guards against runaway accumulation.
+ */
+export interface TokenBudget {
+  /** Sum of assistant `usage.totalTokens` across settled turns. */
+  totalTokens: number;
+  /** Sum of assistant `usage.cost.total` across settled turns. */
+  costTotal: number;
+  /** Settled turns contributing to the totals. */
+  turns: number;
+}
+
+export function initialBudget(): TokenBudget {
+  return { totalTokens: 0, costTotal: 0, turns: 0 };
+}
+
+/**
+ * Add one settled turn's usage. Malformed or negative usage is ignored
+ * entirely — never partially — so one bad event cannot poison the totals.
+ */
+export function addTurnUsage(
+  b: TokenBudget,
+  usage:
+    | { totalTokens?: unknown; cost?: { total?: unknown } | null }
+    | null
+    | undefined,
+): TokenBudget {
+  if (!usage) return b;
+  const tokens = usage.totalTokens;
+  const cost = usage.cost?.total;
+  if (typeof tokens !== "number" || !Number.isFinite(tokens) || tokens < 0)
+    return b;
+  if (
+    cost !== undefined &&
+    (typeof cost !== "number" || !Number.isFinite(cost) || cost < 0)
+  )
+    return b;
+  return {
+    totalTokens: Math.min(1e12, b.totalTokens + Math.round(tokens)),
+    costTotal:
+      typeof cost === "number"
+        ? Math.min(1e6, b.costTotal + cost)
+        : b.costTotal,
+    turns: b.turns + 1,
+  };
+}
+
+/** Compact chip text for the deck: `5.2k tok` (+ `$0.031` when nonzero). */
+export function budgetChipText(b: TokenBudget): string | null {
+  if (b.turns === 0) return null;
+  const tokens =
+    b.totalTokens >= 10000
+      ? `${(b.totalTokens / 1000).toFixed(1)}k`
+      : String(b.totalTokens);
+  const cost = b.costTotal > 0 ? ` · $${b.costTotal.toFixed(3)}` : "";
+  return `${tokens} tok${cost}`;
+}

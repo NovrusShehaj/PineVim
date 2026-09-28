@@ -10,6 +10,7 @@ import {
   WORK_FRAMES_UNICODE,
 } from "../../src/piui/glyphs.js";
 import {
+  budgetChip,
   contextGauge,
   contextSparkline,
   chipLine,
@@ -56,6 +57,12 @@ import {
   WELCOME_TYPE,
 } from "../../src/piui/renderers/runLedger.js";
 import { style, strong, surface } from "../../src/piui/style.js";
+import {
+  addTurnUsage,
+  budgetChipText,
+  initialBudget,
+  type TokenBudget,
+} from "../../src/piui/runs.js";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import {
   PINEVIM_THEMES,
@@ -1452,7 +1459,12 @@ describe("frame surfaces", () => {
     );
   });
   it("D4: sparkline renders an N-cell series at width >= 80", () => {
-    const { chip, updated } = contextSparkline([10, 20, 35, 50, 70], 75, 120, false);
+    const { chip, updated } = contextSparkline(
+      [10, 20, 35, 50, 70],
+      75,
+      120,
+      false,
+    );
     assert.ok(chip);
     assert.match(chip!.text, /^ctx [\u2581-\u2588]+ 75%$/);
     assert.equal(updated.length, 6);
@@ -1471,6 +1483,107 @@ describe("frame surfaces", () => {
     assert.equal(high?.role, "error");
     assert.equal(mid?.role, "warning");
     assert.equal(low?.role, "muted");
+  });
+  it("T-03: budget chip accumulates usage, formats and never renders unvalidated numbers", () => {
+    assert.equal(budgetChipText(initialBudget()), null);
+    let b = initialBudget();
+    b = addTurnUsage(b, { totalTokens: 5200, cost: { total: 0.0208 } });
+    b = addTurnUsage(b, { totalTokens: 180, cost: { total: 0.0009 } });
+    assert.equal(b.totalTokens, 5380);
+    assert.equal(b.turns, 2);
+    // Below the 10k threshold the raw count is shown; above it, a k figure.
+    assert.match(budgetChipText(b)!, /5380 tok/);
+    assert.match(budgetChipText(b)!, /\$0\.022/);
+    assert.match(
+      budgetChipText(addTurnUsage(b, { totalTokens: 48620 }))!,
+      /54\.0k tok/,
+    );
+    // Malformed/negative usage is ignored entirely.
+    const before = b;
+    for (const bad of [
+      null,
+      undefined,
+      { totalTokens: -5 },
+      { totalTokens: "many" },
+      { totalTokens: NaN },
+      { totalTokens: 10, cost: { total: -1 } },
+    ])
+      assert.deepEqual(addTurnUsage(before, bad as never), before);
+    // Ascii chip swaps the separator for a hyphen.
+    const asciiChip = budgetChip(b, true)!.text;
+    assert.ok(
+      !asciiChip.includes("\u00b7"),
+      "ascii chip kept unicode separator",
+    );
+    assert.match(asciiChip, /- \$0\.022/);
+  });
+  it("T-03: deck renders the token chip in the ENV row and stays width-safe", () => {
+    const footer = {
+      getGitBranch: () => "main",
+      onBranchChange: () => {},
+    } as never;
+    const budget: TokenBudget = {
+      totalTokens: 53800,
+      costTotal: 0.0217,
+      turns: 2,
+    };
+    const make = (width: number, ascii: boolean) =>
+      stripTerminalSequences(
+        deckFactory(
+          frameTui,
+          frameTheme,
+          footer,
+          glyphs(ascii ? "ascii" : "unicode"),
+          {
+            lifecycle: tooling,
+            ctxPercent: 42,
+            ctxHistory: [30, 38, 42],
+            tokens: budget,
+            model: "gpt-test",
+            thinking: "medium",
+            prefix: "F12",
+            ascii,
+          },
+        )
+          .render(width)
+          .join("\n"),
+      );
+    const wide = make(120, false);
+    assert.match(wide, /53\.8k tok/);
+    assert.match(wide, /\$0\.022/);
+    assert.match(wide, /ctx/);
+    for (const width of [60, 80, 100, 120, 200]) {
+      for (const ascii of [false, true]) {
+        const line = make(width, ascii);
+        const visible = line
+          .split("\n")
+          .map((l) => [...stripTerminalSequences(l)].length);
+        assert.ok(
+          visible.every((n) => n <= width),
+          `deck overflowed at ${width} (ascii=${ascii}): ${line}`,
+        );
+      }
+    }
+  });
+  it("T-03: deck hides the token chip until the first turn settles", () => {
+    const footer = {
+      getGitBranch: () => "main",
+      onBranchChange: () => {},
+    } as never;
+    const line = stripTerminalSequences(
+      deckFactory(frameTui, frameTheme, footer, glyphs("unicode"), {
+        lifecycle: tooling,
+        ctxPercent: 42,
+        tokens: initialBudget(),
+        model: "gpt-test",
+        thinking: "medium",
+        prefix: "F12",
+        ascii: false,
+      })
+        .render(120)
+        .join("\n"),
+    );
+    assert.doesNotMatch(line, /tok/);
   });
   it("D10: glyph set exposes 8 new state glyphs with ASCII fallbacks", () => {
     const newKeys: Array<keyof GlyphSet> = [
