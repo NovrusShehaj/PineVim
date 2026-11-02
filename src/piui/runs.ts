@@ -1,3 +1,5 @@
+import { sanitizeUntrusted } from "../diagnostics.js";
+
 /**
  * A run is one user request: agent_start through agent_settled.
  * Pi turns are model calls and are accumulated, not shown as separate rules.
@@ -66,14 +68,22 @@ export function runTools(
 }
 
 export function runToolName(s: RunState, name: string): RunState {
-  if (!s.active || !name || s.toolNames.length >= 32) return s;
-  return { ...s, toolNames: [...s.toolNames, name.slice(0, 40)] };
+  if (!s.active || s.toolNames.length >= 32) return s;
+  // Tool names are agent-controlled. Sanitize at capture so every later
+  // renderer (ledger, timeline payload, review) inherits the clean value.
+  const clean = sanitizeUntrusted(name, 40);
+  if (!clean) return s;
+  return { ...s, toolNames: [...s.toolNames, clean] };
 }
 
 export function runPath(s: RunState, path: string | null): RunState {
   if (!s.active || !path) return s;
-  if (s.toolPaths.includes(path) || s.toolPaths.length >= 20) return s;
-  return { ...s, toolPaths: [...s.toolPaths, path.slice(0, 180)] };
+  // Paths are agent-controlled: a crafted filename can carry escape or
+  // zero-width sequences that rewrite the rendered line.
+  const clean = sanitizeUntrusted(path, 180);
+  if (!clean || s.toolPaths.includes(clean) || s.toolPaths.length >= 20)
+    return s;
+  return { ...s, toolPaths: [...s.toolPaths, clean] };
 }
 
 export function runClose(

@@ -12,11 +12,13 @@ import {
 } from "../adapters/tmux/statusline.js";
 import {
   helpPanelLines,
+  insightsPanelLines,
   statusPanelLines,
   timelinePanelLines,
 } from "../adapters/tmux/panels.js";
 import { parseTelemetryLine } from "../piui/lifecycle.js";
 import type { TimelineEntry } from "../piui/runs.js";
+import { readInsights } from "../piui/run-store.js";
 
 /**
  * Parse the bridge's bounded timeline payload (validated by the protocol
@@ -381,6 +383,25 @@ export class AppController {
         await this.showPanel("timeline");
         return { message: "PineVim session timeline shown in a popup." };
       }
+      // Tier 2 #5: cross-session insights from the durable run index.
+      // A missing/unavailable index degrades to an explanatory popup.
+      if (intent === "insights") {
+        await this.showPanel("insights");
+        return { message: "PineVim insights shown in a popup." };
+      }
+      if (intent === "search") {
+        // The slash command carries the query text in the reply message;
+        // controller-side, search opens the insights panel is not useful.
+        // Instead the in-pane /pinevim search (local command) does the real
+        // work; this intent exists for menu/helper parity and says so.
+        await this.tmux.notifyBranded(
+          "Use /pinevim search <query> in the agent pane.",
+          "info",
+        );
+        return {
+          message: "Search runs from the agent pane: /pinevim search <query>.",
+        };
+      }
       if (intent === "status" || intent === "help") {
         // Panels replace the legacy one-line help/status toasts.
         // The intent still returns the legacy message so slash replies keep
@@ -633,7 +654,10 @@ export class AppController {
   }
   private async renderStatus(): Promise<void> {
     const s = this.state;
-    const palette = paletteForStatus(this.config.ui.theme, this.config.ui.glyphs === "ascii");
+    const palette = paletteForStatus(
+      this.config.ui.theme,
+      this.config.ui.glyphs === "ascii",
+    );
     const styled = statusOptionValue(
       {
         state: s,
@@ -665,6 +689,15 @@ export class AppController {
       // Spawn-time view snapshot for the in-pane header (resumed workspaces
       // start in their persisted mode); live updates arrive via intents.
       PINEVIM_IDE: this.state.mode === "CHAT_ONLY" ? "0" : "1",
+      // Tier 2 #4/#6: durable state dir for the run index, plus the session
+      // cost ceiling (USD). Unset budget keys stay absent => disabled.
+      PINEVIM_STATE_DIR: this.store.directory,
+      ...(this.config.ui.budget?.warnAt !== undefined
+        ? { PINEVIM_BUDGET_WARN: String(this.config.ui.budget.warnAt) }
+        : {}),
+      ...(this.config.ui.budget?.stopAt !== undefined
+        ? { PINEVIM_BUDGET_STOP: String(this.config.ui.budget.stopAt) }
+        : {}),
     };
     return env;
   }
@@ -687,10 +720,27 @@ export class AppController {
   }
 
   /** Show a help/status popup; falls back to a plain toast on failure. */
-  private async showPanel(kind: "help" | "status" | "timeline"): Promise<void> {
+  private async showPanel(
+    kind: "help" | "status" | "timeline" | "insights",
+  ): Promise<void> {
     const ascii = this.config.ui.glyphs === "ascii";
     try {
-      if (kind === "timeline") {
+      if (kind === "insights") {
+        const snapshot = readInsights(this.store.directory, 30);
+        await this.tmux.popup(
+          insightsPanelLines(
+            {
+              prefix: this.config.prefix,
+              snapshot,
+              days: 30,
+            },
+            ascii,
+          ),
+          70,
+          process.execPath,
+          helper,
+        );
+      } else if (kind === "timeline") {
         await this.tmux.popup(
           timelinePanelLines(
             {
@@ -820,9 +870,9 @@ export class AppController {
       await this.persist();
       await this.renderStatus();
       await this.tmux.notifyBranded(
-                  "Quit Neovim with :qa or :wqa, then repeat PineVim quit. Modified buffers remain protected.",
-                  "warning",
-                );
+        "Quit Neovim with :qa or :wqa, then repeat PineVim quit. Modified buffers remain protected.",
+        "warning",
+      );
       return;
     }
     if (!this.state.agent?.alive) {

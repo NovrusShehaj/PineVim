@@ -3,6 +3,7 @@ import { constants } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { PineError } from "./diagnostics.js";
+import { validateBudgetInput } from "./piui/budget.js";
 export interface Config {
   prefix: string;
   agentRatio: number | null;
@@ -43,6 +44,13 @@ export interface UiConfig {
    * headless and scripted recovery.
    */
   confirm: { quit: ConfirmPolicy; retry: ConfirmPolicy };
+  /**
+   * Session cost ceiling (Tier 2 #6). Absent keys mean disabled. `warnAt`
+   * notifies once when session spend crosses the threshold; `stopAt` blocks
+   * further model work at the enforcement boundary in the Pi extension.
+   * Both are USD numbers from the session's cumulative usage.
+   */
+  budget?: { warnAt?: number; stopAt?: number };
 }
 export const defaults: Config = {
   prefix: "F12",
@@ -125,7 +133,7 @@ export function validateConfig(input: unknown): Config {
         const ui: UiConfig = {
           ...defaults.ui,
           confirm: { ...defaults.ui.confirm },
-        };
+        } as UiConfig;
         // defaults.ui is shared; give each parse its own copy so a partial
         // ui section cannot mutate the defaults object.
         ui.theme = "auto";
@@ -135,11 +143,12 @@ export function validateConfig(input: unknown): Config {
             key !== "motion" &&
             key !== "glyphs" &&
             key !== "theme" &&
-            key !== "confirm"
+            key !== "confirm" &&
+            key !== "budget"
           )
             throw new PineError(
               "CONFIG",
-              "Unknown field in ui config; allowed: enabled, motion, glyphs, theme.",
+              "Unknown field in ui config; allowed: enabled, motion, glyphs, theme, confirm, budget.",
             );
           if (key === "enabled") {
             if (typeof item !== "boolean")
@@ -175,6 +184,15 @@ export function validateConfig(input: unknown): Config {
                 "ui.theme must be auto or a pinevim theme (dark, light, mono, neon, cyberpunk, forest, snow).",
               );
             ui.theme = item;
+          }
+          if (key === "budget") {
+            // Delegates to the budget module's validator so the config file,
+            // the guard, and the tests share one rule set.
+            const budget = validateBudgetInput(item, (message) => {
+              throw new PineError("CONFIG", message);
+            });
+            if (budget.warnAt !== undefined || budget.stopAt !== undefined)
+              ui.budget = budget;
           }
           if (key === "confirm") {
             if (!item || typeof item !== "object" || Array.isArray(item))

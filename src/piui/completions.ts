@@ -55,6 +55,16 @@ export const PINEVIM_COMPLETIONS: Record<string, AutocompleteItem[]> = {
       description: "Propose a skill from the last run",
     },
     { value: "skills", label: "skills", description: "List learned skills" },
+    {
+      value: "search",
+      label: "search",
+      description: "Search runs across sessions",
+    },
+    {
+      value: "insights",
+      label: "insights",
+      description: "Cross-session run analytics",
+    },
   ],
 };
 

@@ -6,6 +6,8 @@ import {
   setSkillStatus,
 } from "../skills/registry.js";
 import type { PiUi } from "./index.js";
+import { formatInsightsLines, formatSearchResults } from "./search-commands.js";
+import { localRunIndex } from "./run-store.js";
 
 /** Paths for the review dialog. Empty runs get one inert line. */
 export function reviewOptions(paths: readonly string[]): string[] {
@@ -22,7 +24,64 @@ export async function handlePinevimLocal(
 ): Promise<boolean> {
   const parts = args.trim().split(/\s+/).filter(Boolean);
   const head = parts[0] ?? "";
-  if (head !== "review" && head !== "learn" && head !== "skills") return false;
+  if (
+    head !== "review" &&
+    head !== "learn" &&
+    head !== "skills" &&
+    head !== "search" &&
+    head !== "insights"
+  )
+    return false;
+  if (head === "search") {
+    const query = parts.slice(1).join(" ");
+    if (!query) {
+      context.ui.notify(
+        "Usage: /pinevim search <words>. Searches tools, files and sessions across runs.",
+        "info",
+      );
+      return true;
+    }
+    const opened = localRunIndex();
+    if (!opened) {
+      context.ui.notify(
+        "Run index unavailable; cross-session search is disabled this session.",
+        "warning",
+      );
+      return true;
+    }
+    try {
+      const results = opened.index.search(query, 20);
+      const lines = formatSearchResults(query, results);
+      await context.ui.select("pinevim search", lines);
+    } finally {
+      opened.release();
+    }
+    return true;
+  }
+  if (head === "insights") {
+    const raw = parts[1];
+    let days = 30;
+    if (raw !== undefined) {
+      const parsed = Number(raw);
+      if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 3650) {
+        context.ui.notify(
+          "Usage: /pinevim insights [days] with days 1–3650.",
+          "warning",
+        );
+        return true;
+      }
+      days = parsed;
+    }
+    const opened = localRunIndex();
+    try {
+      const snapshot = opened?.index.insights(days) ?? null;
+      const lines = formatInsightsLines(days, snapshot);
+      await context.ui.select("pinevim insights", lines);
+    } finally {
+      opened?.release();
+    }
+    return true;
+  }
   if (head === "review") {
     const summary = ui?.lastSummary;
     const title = summary?.changes

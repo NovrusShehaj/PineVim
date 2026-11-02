@@ -19,6 +19,15 @@ npm run build
 node dist/cli.js /path/to/workspace
 ```
 
+Before the first run, diagnose the environment:
+
+```sh
+node dist/cli.js doctor            # readiness report; exit 1 on failures
+node dist/cli.js completions zsh   # generated from the live command registry
+```
+
+`pinevim doctor` reports platform, Node, config, dependency versions, terminfo, XDG directory writability, and workspace lock state without starting a workspace. It never throws on a missing dependency; each problem is a finding with a remedy. `pinevim completions bash|zsh|fish` emits a completion script generated from the same registries the parser and the `F12 ?` guide read, so a command cannot exist in one and be missing from the other. See [Diagnostics and completions](#diagnostics-and-completions).
+
 For a local packaged installation:
 
 ```sh
@@ -40,6 +49,8 @@ Or install the tarball using npm's global **user-controlled prefix** and add tha
 | `/pinevim agent hide`                               | Show the editor at full width; keep Pi running              |
 | `/pinevim agent show`                               | Reveal and focus Pi without restarting either child         |
 | `/pinevim status`, `/pinevim help`                  | Show workspace/controller information and controls          |
+| `/pinevim search <words>`                           | Search past runs across sessions (tools, files, sessions)   |
+| `/pinevim insights [days]`                          | Cross-session analytics for the last N days (default 30)    |
 | `/pinevim quit`                                     | Request the safe application quit flow                      |
 
 “Close” closes the **view**. It does not terminate Neovim. To terminate the editor, use its normal `:qa`, `:wqa`, or your configured keys. Modified-buffer refusal remains Neovim's responsibility. PineVim never types a quit command into the editor and never kills it to complete normal shutdown.
@@ -60,6 +71,32 @@ The private prefix defaults to **F12**, followed by a second key. Letters are lo
 Pi's Ctrl+L and Neovim's Ctrl+H/J/K/L remain application keys. Ctrl+C goes directly to the focused child. Prefix controls work independently of the Pi bridge, including while Pi is busy or unavailable.
 
 At **101×24** or larger, IDE mode displays editor left and Pi right. The default agent width is `clamp(round(0.35 × (columns − 1)), 40, 64)`, further constrained to leave the editor at least 60 columns. Border dragging and prefix arrows retain a user ratio. Smaller terminals show one pane at a time; prefix then Tab switches focus. Resizing below 60×16 preserves existing children and shows resize guidance. A fresh launch below that size is rejected.
+
+## Diagnostics and completions
+
+`pinevim doctor [directory]` runs every readiness check and prints a layered report:
+
+| Layer           | What it proves                                                                   |
+| --------------- | -------------------------------------------------------------------------------- |
+| `ENVIRONMENT`   | macOS or Linux, Node >=22.19.0, an interactive `TERM`                            |
+| `TERMINAL`      | `tmux-256color` / `screen-256color` terminfo, `COLORTERM` for truecolor          |
+| `CONFIGURATION` | `config.json` parsed, with the effective prefix, theme, glyphs, and log level    |
+| `DEPENDENCIES`  | Pi matches the pinned version, Neovim and tmux >=3.5 resolve and report versions |
+| `DIRECTORIES`   | `XDG_CONFIG_HOME`, `XDG_STATE_HOME`, and `XDG_RUNTIME_DIR` are writable          |
+| `WORKSPACE`     | the directory exists, is writable, and its lock/state files are reported as-is   |
+
+The report is plain text with no escape sequences, so it pipes cleanly. Findings are `ok`, `warn`, or `fail`; the process exits non-zero only when something failed. A workspace lock is **reported, never removed** — deleting it while a controller may still be alive is exactly what the lock protocol prevents.
+
+Agent-supplied text is sanitized before it reaches the control plane. Tool names and paths pass through `sanitizeUntrusted`, which strips C0/C1 controls, zero-width characters, and bidi overrides while preserving visible non-ASCII, so a crafted filename cannot repaint the status line or reorder text on screen. This applies at capture in the run state, so the run ledger, the `F12 t` timeline, and `/pinevim review` all inherit the clean value.
+
+`pinevim completions bash|zsh|fish` writes a completion script to stdout:
+
+```sh
+eval "$(pinevim completions zsh)"   # zsh
+pinevim completions bash > ~/.local/share/bash-completion/completions/pinevim
+```
+
+Slash subcommands come from `SLASH_COMMANDS` in `src/commands.ts`, which is also what the parser dispatches through; prefix chords come from `helpRows()`, the same table the `F12 ?` guide renders. Adding a command to either table updates parsing, help, and completions together.
 
 ## Safe quit and recovery
 
@@ -89,12 +126,15 @@ Optional configuration: `${XDG_CONFIG_HOME:-~/.config}/pinevim/config.json`. Not
     "motion": "on",
     "glyphs": "unicode",
     "theme": "auto",
-    "confirm": { "quit": "ask", "retry": "ask" }
+    "confirm": { "quit": "ask", "retry": "ask" },
+    "budget": { "warnAt": 2, "stopAt": 5 }
   }
 }
 ```
 
 `pi`, `nvim`, and `tmux` may be absolute executable paths. Executable shell expressions, unknown fields, and provider settings are rejected. Supported prefix forms include F1–F24, a lowercase letter, `C-letter`, `M-letter`, and `C-Space`. Invalid tmux configuration fails locally. `PINEVIM_LOG_LEVEL=debug` overrides the config's log level. No executable project config is supported. The `ui` section controls the in-pane PineVim frame: `enabled` (master switch), `motion` (`off` replaces the animated working indicator with a static glyph), `glyphs` (`ascii` forces the ASCII fallback vocabulary for all PineVim chrome), `theme` (`auto` applies `pinevim-dark` or `pinevim-light` only while Pi is still on its built-in `dark` or `light` theme; an explicit `pinevim-*` name pins that theme; applied per-session, never persisted to Pi settings), and `confirm` (per-action `ask` | `always` | `never` policy for busy quit and dead-agent recovery; `ask` prompts in tmux when a client is attached and refuses with guidance headless, `always` confirms on a repeated action within 30 seconds, `never` proceeds unattended).
+
+`ui.budget` is the session cost ceiling. `warnAt` (USD) shows one warning when the session's accumulated model cost first crosses the threshold; `stopAt` (USD) blocks further model work once spend reaches the ceiling — Pi refuses to start a new run and aborts the active run at the next settled turn, before any additional billable request. Values must be positive numbers with `warnAt ≤ stopAt`; omit the `budget` key (or either field) to leave that guard disabled. The ceiling tracks what providers report per turn (`usage.cost.total`); turns without price information add nothing to the total, so the guard can only under-report, never over-report.
 
 State and opt-in logs live under `${XDG_STATE_HOME:-~/.local/state}/pinevim/`. Runtime sockets live in a private directory under a validated `XDG_RUNTIME_DIR` or the OS temporary directory, with a short-path fallback. State files and IPC token files are private. Logs contain allowlisted controller events, rotate at 5 MiB with three archives, and are never uploaded.
 
@@ -110,7 +150,7 @@ Conflict behavior: PineVim can see a custom editor and stands down with a one-ti
 
 Neovim starts normally in the workspace with `PINEVIM=1`. An intentional `NVIM_APPNAME` is preserved. Inherited remote-editor markers are removed for the editor child. After your config loads, PineVim applies the same theme JSON the Pi pane is using: transparent background so both panes share the terminal, syntax and diagnostics in the pine/teal/sand palette, a single status line, and flat separators instead of powerline arrows. `ui.theme: "auto"` follows Neovim's `background` (`pinevim-dark` or `pinevim-light`); an explicit `pinevim-*` name uses that file. Your Neovim config still owns LSP, completion, diagnostics, formatting, git UI, tests, and debugging. PineVim does not edit that config, install a plugin, or use Neovim RPC. Prefix keys default to F12 so Pi's Ctrl+L and Neovim's Ctrl+H/J/K/L stay with those programs. Ctrl+C goes to the focused child.
 
-PineVim does not add a command palette, permission cards, a third pane, or a file tree. `/pinevim review` reports paths from the last run and does not open buffers. `/pinevim learn` and `/pinevim skills` are off until you run them; learned skills are instructions under `${XDG_DATA_HOME:-~/.local/share}/pinevim/skills`, not in the repository.
+PineVim does not add a command palette, permission cards, a third pane, or a file tree. `/pinevim review` reports paths from the last run and does not open buffers. `/pinevim search` and `/pinevim insights` read PineVim's own run ledger — the structured record of runs, tools, edited/written files, outcomes, tokens, and cost kept in the workspace state directory (`runs.db`, SQLite with an FTS5 index; schema versioned and migrated automatically). They cover every session ever run in that workspace with this PineVim version, not chat transcripts; Pi owns conversation history and its own session search. `/pinevim learn` and `/pinevim skills` are off until you run them; learned skills are instructions under `${XDG_DATA_HOME:-~/.local/share}/pinevim/skills`, not in the repository.
 
 Bare `/ide` must be unambiguously owned by the bundled extension. On collision, use `/pinevim ide` or the prefix, resolve the competing resource yourself, then `/reload`. A `/pinevim` collision disables slash integration; prefix controls remain available. Native Pi commands, provider settings, and session files stay Pi-owned.
 

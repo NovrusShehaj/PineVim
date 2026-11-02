@@ -21,32 +21,28 @@ import {
   isPinevimThemeName,
 } from "../../piui/theme.js";
 import { planReport } from "../../piui/report-gate.js";
+import { findSlashCommand, USAGE } from "../../commands.js";
 import { handlePinevimLocal } from "../../piui/local-commands.js";
+import { wireTier2 } from "../../piui/tier2.js";
 import { skillsRoot } from "../../skills/registry.js";
 import type { UiConfig } from "../../config.js";
 export function parseCommand(command: "ide" | "pinevim", args: string): Intent {
   const input = args.trim().split(/\s+/).filter(Boolean).join(" ");
-  const commands: Record<string, Intent> =
-    command === "ide"
-      ? { "": "ide.open", open: "ide.open", close: "chat" }
-      : {
-          ide: "ide.open",
-          "ide open": "ide.open",
-          "ide close": "chat",
-          "agent hide": "agent.hide",
-          "agent show": "agent.show",
-          chat: "chat",
-          quit: "quit",
-          status: "status",
-          help: "help",
-        };
-  const intent = Object.hasOwn(commands, input) ? commands[input] : undefined;
-  if (!intent)
-    throw new PineError(
-      "USAGE",
-      "Use /ide [open|close], /pinevim ide [open|close], agent hide|show, chat, status, help, or quit.",
-    );
-  return intent;
+  // `/ide` keeps its short aliases; `/pinevim` dispatches through the shared
+  // registry so the parser, help panel, and completions cannot drift.
+  if (command === "ide") {
+    const intent: Record<string, Intent | undefined> = {
+      "": "ide.open",
+      open: "ide.open",
+      close: "chat",
+    };
+    const found = Object.hasOwn(intent, input) ? intent[input] : undefined;
+    if (!found) throw new PineError("USAGE", USAGE);
+    return found;
+  }
+  const entry = findSlashCommand(input);
+  if (!entry) throw new PineError("USAGE", USAGE);
+  return entry.intent;
 }
 function applyConfiguredTheme(
   ui: {
@@ -260,6 +256,10 @@ export default function pinevim(pi: ExtensionAPI): void {
       fileURLToPath(import.meta.url),
     );
     installUi(pi, context);
+    // Tier 2 (#4/#5/#6): run index + budget guard. Wired even when the frame
+    // stands down (ui.enabled=false, non-TUI): indexing and the cost ceiling
+    // are harness services, not chrome.
+    wireTier2(pi, pineUi, context);
     void reconnect(generation);
   });
 

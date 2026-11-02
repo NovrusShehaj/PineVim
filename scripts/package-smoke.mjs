@@ -11,7 +11,7 @@ try {
   )[0];
   for (const { path } of packed.files) {
     if (
-      !/^(dist\/|README.md$|package.json$|Docs\/(Compatibility|Testing|Implementation-Evidence).md$)/.test(
+      !/^(dist\/|README.md$|LICENSE$|package.json$|Docs\/(Compatibility|Testing|Implementation-Evidence).md$)/.test(
         path,
       )
     )

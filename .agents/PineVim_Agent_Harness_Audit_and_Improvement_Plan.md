@@ -308,8 +308,7 @@ Surface Pi's context usage in the ledger (already partly present) and warn at th
 Extend `logLevel` to `off|error|debug`, keep JSONL, add `/pinevim log` popup rendering recent events filtered by level (reuses popup plumbing). *Acceptance:* a failure can be diagnosed from the log alone. GLM-implementable: yes.
 
 ### 7.9 Configuration
-**H-10 · Config lint command.** P2, effort S.
-`pinevim --check-config` validates config + executables + terminfo up front, printing a readiness report (reuses `validateConfig`, `executable()`, `terminfo()`). GLM-implementable: yes.
+**H-10 · Config lint command.** P2, effort S. — **Superseded by H-10 above (`pinevim doctor`), delivered 2026-09-29.** The original `--check-config` scope is a strict subset of what the doctor now covers, and the subcommand form is more discoverable than a flag.
 
 ### 7.10 Hook/plugin architecture
 **H-11 · Extension event surface doc.** P2, effort S.
@@ -322,6 +321,27 @@ Inject a clock into controller timers (2 s coalescer, 30 s confirm expiry) to ma
 ### 7.12 Security & permission boundaries
 **H-13 · Boundary test consolidation.** P1, effort S.
 Keep and extend `security.test.ts`: argv-array execution everywhere [fact per Testing.md], tmux-format escaping in paths (documented underscore rendering), helper action grammar regex, socket path containment. Mark each boundary with a named test title so audits map 1:1. GLM-implementable: yes.
+
+**H-13a · Untrusted-text sanitization (Delivered 2026-09-29).** Effort S.
+The status line already reduced dynamic text through `plain()`, but the timeline panel did not, and its comment asserted the detail strings were PineVIM-authored — untrue for `toolNames`, which are agent-controlled. `runToolName`/`runPath` sliced to 40/180 chars and stripped nothing, so a crafted filename carrying a CSI escape, a zero-width joiner, or a bidi override could repaint or reorder a line the user reads as PineVim chrome. `sanitizeUntrusted` in `src/diagnostics.ts` strips C0/C1 controls, zero-width, and bidi ranges while preserving visible non-ASCII (which `plain()` would destroy, so it is the wrong tool for paths). Applied at capture in `src/piui/runs.ts`, so the ledger, the `F12 t` timeline, and `/pinevim review` all inherit it; re-applied at the timeline sink for defense in depth. Tests: `tests/unit/hardening.test.ts`. Sets the pattern Hermes uses in `hermes_state_titles.py`.
+
+**H-10 · `pinevim doctor` (Delivered 2026-09-29).** Effort M.
+Implemented as a full layered readiness report rather than the config-only lint originally scoped: environment, terminal/terminfo, configuration, dependency versions, XDG directory writability, and workspace lock/state. Never throws — each failure is a finding with a remedy, because a doctor that aborts on the first missing dependency fails exactly when it is most needed. A held lock is reported, never removed. Plain-text output, non-zero exit only on failure. Source: `src/doctor.ts`.
+
+**H-14 · Generated shell completions (Delivered 2026-09-29).** Effort S.
+`pinevim completions bash|zsh|fish` generates scripts from the live registries, borrowing omp's approach so completions cannot drift. Slash subcommands now live in `SLASH_COMMANDS` (`src/commands.ts`), which the parser dispatches through and the usage string is generated from; prefix chords come from `helpRows()`, the same table the `F12 ?` guide renders. Source: `src/completions.ts`, `src/commands.ts`.
+
+**T2-7 · State schema version + migrations (Delivered 2026-09-30).** Effort M.
+Explicit, versioned schema for PineVim-owned durable state, replacing the trajectory where each feature would have grown its own `CREATE TABLE IF NOT EXISTS` calls. The workspace's run index (`runs.db` in the Store directory) carries its schema version in `PRAGMA user_version` — atomic with the file, so a half-applied migration can never claim currency — and `src/store/schema.ts` holds the ordered, transactional migration registry (`applyMigrations`). Fresh databases initialize directly at the latest version; legacy stores (no database) upgrade in one ordered step; a database newer than the binary refuses to open (downgrade guard); `quick_check` gates the open. The legacy `state.json` metadata contract (`version: 1`) is deliberately untouched: no metadata field changed, and a parallel metadata version would be a version lie. Tests: `tests/unit/run-index.test.ts` (fresh init, idempotent reopen, legacy upgrade with file preservation, downgrade refusal, ordering). Full design: `.agents/tier-2-items-4-7-implementation.md`.
+
+**T2-4 · Cross-session run search (Delivered 2026-09-30).** Effort M.
+The harness's structured run observations (one row per `agent_start`…`agent_settled`: timestamps, session, tools, edit/write paths, outcome, tokens, cost) are now durable in the workspace's `runs.db` (`src/piui/run-index.ts`) — previously the run ledger existed only in memory, capped at 12 timeline entries, so nothing historical survived. The `runs_fts` FTS5 virtual table is a derived index maintained by triggers in the same transaction as row writes; FTS5 is not the source of truth. Writes ride the existing run lifecycle in `PiUi` via an injected writer (`src/piui/tier2.ts`), so every future run is indexed by construction; there was no historical data to backfill (honest limitation, documented). `/pinevim search <words>` renders matches with outcome/tool/cost metadata through Pi's selector; user queries are reduced to safe phrase queries so FTS syntax/punctuation cannot break them. Deliberately not a chat-transcript search: Pi owns conversations.
+
+**T2-5 · `/pinevim insights` (Delivered 2026-09-30).** Effort S.
+Cross-session analytics computed in SQL from the canonical `runs` rows (`RunIndex.insights`): run/session counts, tokens, cost, tool totals with failure and interruption counts, top tools, and per-UTC-day buckets over a validated window (default 30 days, 1–3650). Metrics the ledger cannot support (e.g. per-model cost — Pi's `turn_end` usage is not model-attributed) are omitted, not fabricated. Rendered through the existing panel grammar (`insightsPanelLines` in `src/adapters/tmux/panels.ts`) for `F12`-parity popups and through pure formatters (`src/piui/search-commands.ts`) for the in-pane command; number formatting mirrors the deck's cost chip so insights complement rather than duplicate it.
+
+**T2-6 · Session cost ceiling (Delivered 2026-09-30).** Effort M.
+`ui.budget.warnAt` / `ui.budget.stopAt` (USD, positive, `warnAt ≤ stopAt`; absent ⇒ disabled; malformed ⇒ `CONFIG` error, same rules as other `ui` fields). Single source of truth: the guard evaluates the same `TokenBudget` accumulator the deck chip renders. `stopAt` is enforced at a real boundary inside Pi's run loop, verified against the pinned Pi 0.87.1 dist: an awaited `agent_start` handler throws before the run's first provider request, and a `turn_end` handler aborts once spend crosses the ceiling, which latches Pi's `_agentRunAbortRequested` and gates every subsequent `agent.continue()` — so retry/continuation paths cannot bypass it. `warnAt` warns exactly once (latched). Pure decision logic (`src/piui/budget.ts`) is separated from wiring (`src/piui/tier2.ts`); config flows to the extension via `PINEVIM_BUDGET_WARN`/`PINEVIM_BUDGET_STOP` alongside the existing `PINEVIM_*` env set. Tests: `tests/unit/budget.test.ts` (13 cases incl. exact-boundary float semantics and unknown-cost behavior).
 
 ## 8. Production Readiness Plan
 

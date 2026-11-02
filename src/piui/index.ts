@@ -65,9 +65,7 @@ import {
   type RunSummaryData,
   type WelcomeData,
 } from "./renderers/runLedger.js";
-export * from "./renderers/cards.js";
-
-/** Hook probe result used by the compatibility gate. */
+export * from "./renderers/cards.js"; /** Hook probe result used by the compatibility gate. */
 export interface PiUiHooks {
   hasSetHeader: boolean;
   hasSetFooter: boolean;
@@ -122,6 +120,8 @@ export class PiUi {
   /** Abort listener for the current turn's signal, if any. */
   private abortSignal: AbortSignal | null = null;
   private run: RunState = initialRun();
+  /** Active durable run row (Tier 2 #4); null while no run is open. */
+  private runIndexWriterId: number | null = null;
   lastSummary: RunSummaryData | null = null;
   /** Bounded closed-run history for the controller's timeline panel. */
   private timeline: TimelineEntry[] = [];
@@ -129,6 +129,26 @@ export class PiUi {
   private budget: TokenBudget = initialBudget();
   /** Fired when lifecycle text changes. The extension coalesces bridge reports. */
   onTelemetry: (() => void) | null = null;
+  /**
+   * Tier 2 #4: durable run-index writer, injected by the extension. When
+   * null (unavailable index) the frame works exactly as before.
+   */
+  runIndexWriter: {
+    open: (startedAt: number) => number | null;
+    close: (
+      id: number,
+      endedAt: number,
+      seconds: number | null,
+      interrupted: boolean,
+    ) => void;
+    tool: (id: number, name: string, failed: boolean) => void;
+    path: (id: number, path: string) => void;
+    usage: (id: number, usage: unknown) => void;
+  } | null = null;
+  /** Tier 2 #6: current session spend snapshot for the cost guard. */
+  get budgetSnapshot(): TokenBudget {
+    return this.budget;
+  }
 
   constructor(
     private pi: ExtensionAPI,
@@ -390,6 +410,9 @@ export class PiUi {
     this.unsubs.push(
       pi.on("agent_start", () => {
         this.run = runStart(this.run, Date.now());
+        // Tier 2 #4: capture the durable row id this run writes into.
+        const rowId = this.runIndexWriter?.open(Date.now());
+        this.runIndexWriterId = typeof rowId === "number" ? rowId : null;
         this.refresh();
       }),
     );
@@ -400,12 +423,31 @@ export class PiUi {
         const name = String(e.toolName ?? "");
         this.run = runToolName(this.run, name);
         this.run = runPath(this.run, toolWritePath(name, args));
+        if (this.runIndexWriter && this.runIndexWriterId !== null) {
+          this.runIndexWriter.tool(
+            this.runIndexWriterId,
+            name,
+            /* start: no failure info yet */ false,
+          );
+          const path = toolWritePath(name, args);
+          if (path) this.runIndexWriter.path(this.runIndexWriterId, path);
+        }
         this.refresh();
       }),
     );
     this.unsubs.push(
       pi.on("tool_execution_end", (e, _ctx) => {
         this.state = lifecycle.toolEnd(this.state, e);
+        if (
+          this.runIndexWriter &&
+          this.runIndexWriterId !== null &&
+          this.run.active
+        )
+          this.runIndexWriter.tool(
+            this.runIndexWriterId,
+            "",
+            e.isError === true,
+          );
         this.refresh();
       }),
     );
@@ -465,6 +507,11 @@ export class PiUi {
         // T-03: accumulate the settled turn's usage into the session budget.
         if (message && !interrupted)
           this.budget = addTurnUsage(this.budget, message.usage);
+        // Tier 2 #4: same usage feeds the durable run row. The guard reads
+        // the same total via budgetSnapshot from the extension's turn_end
+        // handler, which runs after this one.
+        if (this.runIndexWriter && this.runIndexWriterId !== null)
+          this.runIndexWriter.usage(this.runIndexWriterId, message?.usage);
         this.ctx = ctx;
         this.refresh();
       }),
@@ -475,6 +522,15 @@ export class PiUi {
         this.ctx = ctx;
         const closed = runClose(this.run, Date.now());
         this.run = closed.state;
+        if (this.runIndexWriter && this.runIndexWriterId !== null) {
+          this.runIndexWriter.close(
+            this.runIndexWriterId,
+            Date.now(),
+            closed.summary?.seconds ?? null,
+            closed.summary?.interrupted ?? false,
+          );
+          this.runIndexWriterId = null;
+        }
         const summary = closed.summary;
         if (summary) {
           this.timeline = pushTimelineEntry(this.timeline, {

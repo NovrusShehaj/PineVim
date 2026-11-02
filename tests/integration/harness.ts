@@ -174,8 +174,17 @@ export async function harness(columns = 120, rows = 30, provider = false) {
     async close() {
       await controller.detach().catch(() => {});
       await tmux.command("kill-server").catch(() => {});
+      // nvim writes netrw bookkeeping (.inc) into XDG_STATE_HOME *after* its
+      // pane dies; tearing down immediately races those writes and `rm`
+      // fails with ENOTEMPTY mid-cleanup. Small grace, then force.
+      await new Promise((r) => setTimeout(r, 150));
       await rm(runtime.runtime, { recursive: true, force: true });
-      await rm(root, { recursive: true, force: true });
+      await rm(root, {
+        recursive: true,
+        force: true,
+        maxRetries: 3,
+        retryDelay: 100,
+      }).catch(() => {});
     },
   };
 }

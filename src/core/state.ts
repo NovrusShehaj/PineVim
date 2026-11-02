@@ -16,6 +16,8 @@ export const intents = [
   "help",
   "status",
   "timeline",
+  "search",
+  "insights",
   "reconcile",
 ] as const;
 export type Intent = (typeof intents)[number];

@@ -11,8 +11,16 @@ import { Tmux } from "./adapters/tmux/client.js";
 import { AppController, newMetadata } from "./core/controller.js";
 import { tooSmall } from "./core/layout.js";
 import { run } from "./process.js";
+import { completions, isShell, SHELLS } from "./completions.js";
+import {
+  runDoctor,
+  renderReport,
+  exitCode as doctorExitCode,
+} from "./doctor.js";
 export const HELP = `PineVim — interactive Pi with your normal Neovim in private tmux
 Usage: pinevim [directory] | pinevim --resume [directory]
+       pinevim doctor [directory]
+       pinevim completions bash|zsh|fish
        pinevim --help | pinevim --version
 
 /ide opens Neovim in the workspace cwd (nvim .); /ide close hides it
@@ -24,8 +32,43 @@ Quit Neovim normally before PineVim quit. Unsaved buffers are never force-quit.
 Detach/terminal loss preserves children; --resume reconnects that workspace.
 Requires Node >=22.19.0, Pi 0.87.1, tmux >=3.5; Neovim for IDE mode.
 Pi and Neovim retain their normal settings and may write their own runtime data.
-PineVim never reads provider credentials or edits global tool configuration.`;
+PineVim never reads provider credentials or edits global tool configuration.
+
+doctor reports platform, config, dependency, terminal, directory, and
+workspace readiness without starting a workspace. completions emits a shell
+script generated from the live command registry:
+  eval "$(pinevim completions zsh)"`;
 async function main(): Promise<void> {
+  const sub = process.argv[2];
+  // Subcommands run before parseArgs: they are standalone utilities that must
+  // work headless, including where the interactive TTY gate below would
+  // otherwise refuse to start.
+  if (sub === "doctor") {
+    const workspace = process.argv[3] ?? process.cwd();
+    const report = await runDoctor(workspace);
+    console.log(renderReport(report));
+    process.exitCode = doctorExitCode(report);
+    return;
+  }
+  if (sub === "completions") {
+    const shell = process.argv[3] ?? "";
+    if (!isShell(shell))
+      throw new PineError(
+        "USAGE",
+        `Usage: pinevim completions ${SHELLS.join("|")}.`,
+      );
+    // The configured prefix is baked in because chords are prefix-relative.
+    let prefix = "F12";
+    try {
+      prefix = (await loadConfig()).prefix;
+    } catch {
+      /* completions must still emit with the default prefix */
+    }
+    console.log(completions(shell, prefix));
+    return;
+  }
+  if (sub !== undefined && !sub.startsWith("-"))
+    throw new PineError("USAGE", HELP);
   let args: ReturnType<typeof parseArgs>;
   try {
     args = parseArgs({

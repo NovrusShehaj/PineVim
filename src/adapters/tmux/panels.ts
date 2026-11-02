@@ -5,8 +5,9 @@
  * unavailable. Dynamic values are reduced to printable text before styling;
  * the only colors in this file are PineVIM-authored SGR roles.
  */
-import { plain, recoveryCopy } from "../../diagnostics.js";
+import { plain, recoveryCopy, sanitizeUntrusted } from "../../diagnostics.js";
 import { fit } from "../../piui/glyphs.js";
+import type { InsightsSnapshot } from "../../piui/run-index.js";
 import type { TimelineEntry } from "../../piui/runs.js";
 import { sgr, type SgrRole } from "./styled.js";
 import { helperCommand, tmuxQuote } from "./config.js";
@@ -73,7 +74,10 @@ export function helpRowsForState(
     rows.push({ key: `${p} Left`, action: "agent width -5" });
     rows.push({ key: `${p} Right`, action: "agent width +5" });
   }
-  rows.push({ key: `${p} r`, action: dead ? "retry Pi (required)" : "retry Pi (if dead)" });
+  rows.push({
+    key: `${p} r`,
+    action: dead ? "retry Pi (required)" : "retry Pi (if dead)",
+  });
   rows.push({ key: `${p} q`, action: "safe quit" });
   rows.push({ key: `${p} s`, action: "workspace status" });
   rows.push({ key: `${p} t`, action: "session timeline" });
@@ -132,6 +136,8 @@ export function helpPanelLines(prefix: string, ascii = false): string[] {
     "/pinevim help     this key list",
     "/pinevim review   files from the last run",
     "/pinevim skills   learned skills",
+    "/pinevim search   find runs across sessions",
+    "/pinevim insights cross-session analytics",
   ];
   return [
     title,
@@ -225,7 +231,11 @@ export function timelinePanelLines(
         (entry.failed ? ` ${g.bullet} fail ${entry.failed}` : "") +
         (entry.interrupted ? ` ${g.bullet} stopped` : "") +
         (entry.toolNames.length
-          ? ` ${g.bullet} ${entry.toolNames.slice(0, 3).join(" ")}`
+          ? ` ${g.bullet} ${entry.toolNames
+              .slice(0, 3)
+              .map((n) => sanitizeUntrusted(n, 24))
+              .filter(Boolean)
+              .join(" ")}`
           : ""),
       role: entry.failed || entry.interrupted ? "warning" : "text",
     });
@@ -237,9 +247,9 @@ export function timelinePanelLines(
     });
   if (rows.length === 0)
     rows.push({ label: "", detail: "no runs yet this session", role: "muted" });
-  // Detail strings are PineVIM-authored templates plus bounded numbers, so
-  // they bypass plain() (which would mangle the panel's Unicode bullets); the
-  // fit() call still bounds them to the panel width.
+  // The surrounding template and numbers are PineVIM-authored, so they keep
+  // the panel's Unicode bullets; every agent-supplied name is sanitized
+  // above, and fit() still bounds the result to the panel width.
   for (const r of rows.slice(-22))
     lines.push(
       `${paint("muted", fit(r.label, 12, g.ellipsis).padEnd(12, " "))}${paint(r.role, fit(r.detail, CONTENT_WIDTH - 13, g.ellipsis))}`,
@@ -343,6 +353,115 @@ export function statusPanelLines(
     panelRule(g),
     paint("dim", ` ${g.arrow} press any key to close`),
   ];
+  return lines;
+}
+
+/** The controller-owned facts the insights panel renders. */
+export interface InsightsFacts {
+  prefix: string;
+  /** Aggregate snapshot; null when the run index is unavailable. */
+  snapshot: InsightsSnapshot | null;
+  /** Window the snapshot covers, in days. */
+  days: number;
+}
+
+/** Compact USD, matching the deck chip's 3-decimal small-value style. */
+function usd(value: number): string {
+  return `$${value.toFixed(value < 10 ? 3 : 2)}`;
+}
+
+/**
+ * Cross-session insights (Tier 2 #5): aggregates computed from the durable
+ * run index, rendered with the same panel grammar as status/timeline.
+ * Complements the deck's session cost chip with cross-session history.
+ */
+export function insightsPanelLines(
+  facts: InsightsFacts,
+  ascii = false,
+): string[] {
+  const g = panelGlyphs(ascii);
+  const title = `${paint("accent", " PINEVIM ")}${paint("muted", ` insights · last ${facts.days} days`)}`;
+  const lines: string[] = [title, panelRule(g)];
+  const snapshot = facts.snapshot;
+  if (!snapshot) {
+    lines.push(
+      paint(
+        "muted",
+        fit(
+          "Run index unavailable for this workspace.",
+          CONTENT_WIDTH,
+          g.ellipsis,
+        ),
+      ),
+      paint(
+        "muted",
+        fit(
+          "Runs are indexed from now on; check back after a run.",
+          CONTENT_WIDTH,
+          g.ellipsis,
+        ),
+      ),
+    );
+  } else if (snapshot.runs === 0) {
+    lines.push(
+      paint(
+        "muted",
+        fit("No runs indexed in this window yet.", CONTENT_WIDTH, g.ellipsis),
+      ),
+    );
+  } else {
+    const row = (
+      label: string,
+      value: string,
+      role: SgrRole = "text",
+    ): string =>
+      `${paint("muted", fit(plain(label, 12), 12, g.ellipsis).padEnd(12, " "))}${paint(role, fit(value, CONTENT_WIDTH - 13, g.ellipsis))}`;
+    const tokensText =
+      snapshot.totalTokens >= 10000
+        ? `${(snapshot.totalTokens / 1000).toFixed(1)}k`
+        : snapshot.totalTokens.toLocaleString("en-US");
+    lines.push(
+      row(
+        "runs",
+        `${snapshot.runs} across ${snapshot.sessions} session${snapshot.sessions === 1 ? "" : "s"}`,
+      ),
+      row("tokens", tokensText),
+      row("cost", usd(snapshot.costTotal), "accent"),
+      row(
+        "outcomes",
+        `${snapshot.tools} tool${snapshot.tools === 1 ? "" : "s"}` +
+          (snapshot.failedTools ? `, ${snapshot.failedTools} failed` : "") +
+          (snapshot.interrupted ? `, ${snapshot.interrupted} stopped` : ""),
+        snapshot.failedTools || snapshot.interrupted ? "warning" : "text",
+      ),
+    );
+    if (snapshot.topTools.length > 0)
+      lines.push(
+        panelHeading("top tools", g),
+        ...snapshot.topTools
+          .slice(0, 4)
+          .map((tool) =>
+            row(
+              tool.name,
+              `${tool.count} run${tool.count === 1 ? "" : "s"}`,
+              "text",
+            ),
+          ),
+      );
+    const days = snapshot.perDay.slice(-5);
+    if (days.length > 0)
+      lines.push(
+        panelHeading("recent days", g),
+        ...days.map((day) =>
+          row(
+            day.day,
+            `${day.runs} run${day.runs === 1 ? "" : "s"}${day.cost > 0 ? ` · ${usd(day.cost)}` : ""}`,
+            "text",
+          ),
+        ),
+      );
+  }
+  lines.push(panelRule(g), paint("dim", ` ${g.arrow} press any key to close`));
   return lines;
 }
 

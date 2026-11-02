@@ -5,6 +5,93 @@ import { join } from "node:path";
 import { PINE_TREE } from "../../src/piui/logo.js";
 import { harness, until } from "./harness.js";
 
+/**
+ * Deterministic key entry for a headless nvim pane.
+ *
+ * Flake root cause (pane-dump proven): the original "file loaded" condition
+ * — netrw's `scratch.txt 0,0-1` line disappearing — fires while nvim has
+ * only *displayed* the typed `:e scratch.txt` in its command line and has
+ * not executed it yet. Everything typed afterwards (`i…`, `Escape`, the
+ * writefile Ex command) is then consumed by that still-open command line:
+ * the buffer ends up with literal `iUNSAVED PINEVIM^[` text, the writefile
+ * never runs, and the awaited JSON file never appears — the historical
+ * "Test condition deadline exceeded" flake.
+ *
+ * The fix is a handshake at each stage, not a sleep:
+ * - `ready()`: wait until the statusline positively shows the PineVim
+ *   segment pair (`scratch.txt` … `pinevim`, absent from netrw's own line)
+ *   with no open `:e` command line.
+ * - `ex()`: Ex text is delivered atomically via tmux set-buffer +
+ *   paste-buffer (long `send-keys -l` races nvim's input handling under
+ *   csi-u key format), and each command is verified with an idempotent
+ *   `effect` probe and retried behind a fresh Escape, so one swallowed
+ *   keystroke can no longer poison the whole run.
+ */
+function makeEditorKeys(
+  tmux: { command: (...argv: string[]) => Promise<string> },
+  pane: string,
+): {
+  ready: () => Promise<void>;
+  type: (text: string) => Promise<void>;
+  key: (key: string) => Promise<void>;
+  ex: (command: string, effect: () => Promise<boolean>) => Promise<void>;
+} {
+  const capture = (): Promise<string> =>
+    tmux.command("capture-pane", "-p", "-t", pane);
+  const type = (text: string): Promise<void> =>
+    tmux.command("send-keys", "-t", pane, "-l", text).then(() => undefined);
+  const key = (name: string): Promise<void> =>
+    tmux.command("send-keys", "-t", pane, name).then(() => undefined);
+  /**
+   * True when scratch.txt is the active buffer and no command line is open.
+   *
+   * IMPORTANT: nvim's themed statusline renders `scratch.txt 0,0-1 …` for
+   * the loaded (empty) file, so the netrw-era marker `scratch.txt 0,0-1`
+   * can never distinguish buffers — the old `!includes(...)` condition was
+   * unsatisfiable once the file loaded and always timed out. Detection is
+   * positive instead: the statusline must show the PineVim segment pair
+   * (`scratch.txt` + `pinevim`, absent from netrw's own line), and no open
+   * command line (`:e scratch.txt` rendered alone) may remain.
+   */
+  const bufferShown = async (): Promise<boolean> =>
+    capture().then(
+      (f) =>
+        /scratch\.txt[^\n]*pinevim/.test(f) &&
+        !/(^|\n):e scratch\.txt(\n|$)/.test(f),
+      () => false,
+    );
+  const ready = (): Promise<void> =>
+    until(bufferShown, 10000).then(() => undefined);
+  /**
+   * Run one Ex command and wait for `effect`. Delivery is atomic (buffer
+   * paste), retried up to five times behind a fresh Escape so one swallowed
+   * keystroke cannot derail the run. `effect` must be idempotent —
+   * writefile, `:w`, and `:qa` all are.
+   */
+  const ex = async (
+    command: string,
+    effect: () => Promise<boolean>,
+  ): Promise<void> => {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      await key("Escape");
+      await tmux.command("set-buffer", "--", command).then(
+        () => undefined,
+        () => undefined,
+      );
+      await type(":");
+      await tmux.command("paste-buffer", "-t", pane).then(
+        () => undefined,
+        () => undefined,
+      );
+      await key("Enter");
+      if (await effect()) return;
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    await until(effect);
+  };
+  return { ready, type, key, ex };
+}
+
 test(
   "real Pi slash integration, normal editor continuity, resize, failures and controller recovery",
   { timeout: 120000 },
@@ -28,45 +115,24 @@ test(
       // buffer before typing: netrw directory buffers are read-only, and the
       // continuity assertions below need a writable file buffer.
       await writeFile(join(h.workspace, "scratch.txt"), "");
-      await h.tmux.command(
-        "send-keys",
-        "-t",
-        editor.pane,
-        "-l",
-        ":e scratch.txt",
-      );
-      await h.tmux.command("send-keys", "-t", editor.pane, "Enter");
-      await until(
-        async () =>
-          h.tmux.command("capture-pane", "-p", "-t", editor.pane).then(
-            (f) => !f.includes("scratch.txt        0,0-1"),
-            () => false,
-          ),
-        10000,
-      );
-      await h.tmux.command(
-        "send-keys",
-        "-t",
-        editor.pane,
-        "-l",
-        "iUNSAVED PINEVIM",
-      );
-      await h.tmux.command("send-keys", "-t", editor.pane, "Escape");
+      const keys = makeEditorKeys(h.tmux, editor.pane);
+      await keys.type(":e scratch.txt");
+      await keys.key("Enter");
+      await keys.ready();
+      await keys.type("iUNSAVED PINEVIM");
+      await keys.key("Escape");
       const editorSnapshot = async (name: string) => {
         const path = join(h.workspace, name);
-        await h.tmux.command(
-          "send-keys",
-          "-t",
-          editor.pane,
-          "-l",
-          `:call writefile([json_encode({'text': getline(1,'$'), 'cursor': getcurpos(), 'undo': undotree()})], '${path}')`,
-        );
-        await h.tmux.command("send-keys", "-t", editor.pane, "Enter");
-        await until(async () =>
-          readFile(path, "utf8").then(
-            () => true,
-            () => false,
-          ),
+        await keys.ex(
+          `call writefile([json_encode({'text': getline(1,'$'), 'cursor': getcurpos(), 'undo': undotree()})], '${path}')`,
+          () =>
+            readFile(path, "utf8").then(
+              (content) => {
+                JSON.parse(content);
+                return true;
+              },
+              () => false,
+            ),
         );
         return JSON.parse(await readFile(path, "utf8")) as Record<
           string,
@@ -115,17 +181,9 @@ test(
       assert.equal(h.controller.state.agent!.pid, piPid);
       assert.equal(h.controller.state.editor!.pid, editor.pid);
       // Write the synthetic buffer only, proving retained contents without adding production RPC.
-      await h.tmux.command("send-keys", "-t", editor.pane, "Escape");
-      await h.tmux.command(
-        "send-keys",
-        "-t",
-        editor.pane,
-        "-l",
-        ":w! " + join(h.workspace, "saved.txt"),
-      );
-      await h.tmux.command("send-keys", "-t", editor.pane, "Enter");
-      await until(async () =>
-        readFile(join(h.workspace, "saved.txt"), "utf8").then(
+      const savedPath = join(h.workspace, "saved.txt");
+      await keys.ex("w! " + savedPath, () =>
+        readFile(savedPath, "utf8").then(
           (s) => s.includes("UNSAVED PINEVIM"),
           () => false,
         ),
@@ -133,18 +191,16 @@ test(
       // `:w! saved.txt` only writes a copy: a named buffer keeps its modified
       // flag (the old unnamed homescreen buffer got renamed instead), so
       // plain :qa would raise E37. Save scratch.txt before quitting.
-      await h.tmux.command("send-keys", "-t", editor.pane, "-l", ":w");
-      await h.tmux.command("send-keys", "-t", editor.pane, "Enter");
-      await until(
-        async () =>
-          readFile(join(h.workspace, "scratch.txt"), "utf8").then(
-            (s) => s.includes("UNSAVED PINEVIM"),
-            () => false,
-          ),
-        10000,
+      await keys.ex("w", () =>
+        readFile(join(h.workspace, "scratch.txt"), "utf8").then(
+          (s) => s.includes("UNSAVED PINEVIM"),
+          () => false,
+        ),
       );
-      await h.tmux.command("send-keys", "-t", editor.pane, "-l", ":qa");
-      await h.tmux.command("send-keys", "-t", editor.pane, "Enter");
+      // `:qa` closes the editor; the controller reconciles to CHAT_ONLY when
+      // the editor child dies.
+      await keys.type(":qa");
+      await keys.key("Enter");
       await until(async () => {
         await h.controller.intent("reconcile");
         return h.controller.state.mode === "CHAT_ONLY";
